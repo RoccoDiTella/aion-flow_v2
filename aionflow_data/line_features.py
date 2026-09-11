@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from multiprocessing import Pool
+from multiprocessing import get_context
 from pathlib import Path
 
 import h5py
@@ -69,7 +69,8 @@ def fit_sample(sample: pd.DataFrame, source_path: Path, grid_lo: float, grid_hi:
                                        kind="stable")] for k, v in masks.items()}
     rows = work["source_row"].to_numpy(np.int64)
     log(f"[lines] fitting {len(rows):,} spectra with at least one line in window")
-    pool = Pool(nproc) if nproc > 1 else None
+    # forkserver, not fork: numpy's BLAS threads are already running in this process
+    pool = get_context("forkserver").Pool(nproc) if nproc > 1 else None
     results: list[dict] = []
     t0 = time.time()
     try:
