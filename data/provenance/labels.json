@@ -1,0 +1,130 @@
+{
+  "step": "labels",
+  "written_utc": "2026-09-11T12:42:22+00:00",
+  "config": {
+    "path": "/h/rditella/aion-flow_v2/config.yaml",
+    "sha256": "cb6eb655f07a246a0c6ae1aa010210912a6df6f9bb26cd6a53aceb421c4b5333"
+  },
+  "inputs": {
+    "crossmatch": {
+      "path": "/h/rditella/aion-flow_v2/data/work/crossmatch.parquet",
+      "bytes": 29121953,
+      "sha256": "0a895375f05b5d70e38e9d670413e699a076c1370c4566aafc014bc614e6d784"
+    },
+    "main": {
+      "path": "/h/rditella/aion-flow_v2/data/raw/eRASS3_Main_v1.3.fits",
+      "bytes": 2139595200,
+      "sha256": "4fe0a40f8d6cbd03ff51c5e8b5f665d7adfd04391ab4df99a6caa36053184059"
+    },
+    "cigale": {
+      "path": "/h/rditella/aion-flow_v2/data/raw/IronPhysProp_v1.2.fits",
+      "bytes": 7322716800,
+      "sha256": "8752fe4e5ce357472fb22e38bc2c8a235efabf311e3e593520ced786eded2cc9"
+    }
+  },
+  "counts": {
+    "rows_out": 131314,
+    "log_ml_flux_1_finite": 131248,
+    "log_lx_finite": 130265,
+    "log_sfr_finite": 104050,
+    "logmstar_cigale_finite": 116318,
+    "ref_log_ssfr_finite": 97010,
+    "ape_triple_1_complete": 131314,
+    "ape_triple_p1_complete": 131314,
+    "ape_triple_p2_complete": 131314,
+    "ape_triple_p3_complete": 131314,
+    "ape_triple_p4_complete": 131314
+  },
+  "filters": [],
+  "extra": {
+    "xray": {
+      "1": {
+        "flux_measured": 131248,
+        "flux_not_a_measurement": 66,
+        "det_like_gt_6": 131314,
+        "ape_cts_wrapped": 0,
+        "ape_bkg_negative_clipped": 2,
+        "ape_cts_zero": 0,
+        "ape_triple_complete": 131314
+      },
+      "p1": {
+        "flux_measured": 98002,
+        "flux_not_a_measurement": 33312,
+        "det_like_gt_6": 31947,
+        "ape_cts_wrapped": 0,
+        "ape_bkg_negative_clipped": 0,
+        "ape_cts_zero": 18498,
+        "ape_triple_complete": 131314
+      },
+      "p2": {
+        "flux_measured": 122947,
+        "flux_not_a_measurement": 8367,
+        "det_like_gt_6": 67809,
+        "ape_cts_wrapped": 0,
+        "ape_bkg_negative_clipped": 0,
+        "ape_cts_zero": 2867,
+        "ape_triple_complete": 131314
+      },
+      "p3": {
+        "flux_measured": 119907,
+        "flux_not_a_measurement": 11407,
+        "det_like_gt_6": 64136,
+        "ape_cts_wrapped": 0,
+        "ape_bkg_negative_clipped": 0,
+        "ape_cts_zero": 4683,
+        "ape_triple_complete": 131314
+      },
+      "p4": {
+        "flux_measured": 48116,
+        "flux_not_a_measurement": 83198,
+        "det_like_gt_6": 4816,
+        "ape_cts_wrapped": 0,
+        "ape_bkg_negative_clipped": 0,
+        "ape_cts_zero": 26003,
+        "ape_triple_complete": 131314
+      },
+      "log_lx": {
+        "finite": 130265,
+        "z_le_0": 983
+      }
+    },
+    "cigale": {
+      "vac_rows_for_our_targets": 127967,
+      "targets_in_vac": 127967,
+      "duplicate_fits_resolved": 0,
+      "failed_fit": 2229,
+      "sentinel": 31,
+      "broad_mass_pdf": 11651,
+      "broad_sfr_pdf": 21890,
+      "logmstar_cigale": {
+        "usable": 116316,
+        "unusable": 11651,
+        "removed_by_max_sigma": 0
+      },
+      "log_sfr": {
+        "usable": 104050,
+        "unusable": 22246,
+        "removed_by_max_sigma": 1671
+      },
+      "ref_log_ssfr": {
+        "usable": 97010
+      }
+    },
+    "gates": {
+      "sig_cap_dex": 1.5,
+      "det_like_min": 6.0,
+      "z_floor": 0.001,
+      "cosmology": "Planck18",
+      "cigale_flag_window": [
+        0.2,
+        5.0
+      ],
+      "cigale_max_sigma_dex": 3.0
+    },
+    "output": {
+      "path": "/h/rditella/aion-flow_v2/data/work/labels.csv",
+      "bytes": 255698144,
+      "sha256": "aabe2a04f209f52ee3c330a3b0f3d53b50454c5a84890a67e76b38547c00f962"
+    }
+  }
+}

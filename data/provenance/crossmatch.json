@@ -1,0 +1,114 @@
+{
+  "step": "crossmatch",
+  "written_utc": "2026-09-11T12:40:04+00:00",
+  "config": {
+    "path": "/h/rditella/aion-flow_v2/config.yaml",
+    "sha256": "cb6eb655f07a246a0c6ae1aa010210912a6df6f9bb26cd6a53aceb421c4b5333"
+  },
+  "inputs": {
+    "nway": {
+      "path": "/h/rditella/aion-flow_v2/data/raw/eRASSc3_Main_LS10_Public_27Jul2026.fits.gz",
+      "bytes": 1053710795,
+      "sha256": "32a7e85d6f5e309b153789f72e605c73c96fb8f920bfabc95211b5723f0b8a68"
+    },
+    "desi_zcat": {
+      "path": "/h/rditella/aion-flow_v2/data/raw/zall-pix-iron.fits",
+      "bytes": 21347933760,
+      "sha256": "d6e3700a131499ff50c0561bdf0c5a11d9d5efd1b66f1f329a07b08d10c5802d"
+    }
+  },
+  "counts": {
+    "nway_rows_raw": 1591243,
+    "desi_rows_raw": 28425963,
+    "desi_primary_rows": 27547223,
+    "desi_primary_targetid_le0": 4317874,
+    "desi_primary_bad_position": 0,
+    "desi_rows_kept": 23229349,
+    "rows_out": 131314,
+    "split_source_rows": 4
+  },
+  "filters": [
+    {
+      "filter": "nway_exact_duplicates_collapsed",
+      "kept": 1587897,
+      "dropped": 3346
+    },
+    {
+      "filter": "nway_match_flag==1",
+      "kept": 1460313,
+      "dropped": 127584
+    },
+    {
+      "filter": "nway_one_primary_per_detuid",
+      "kept": 1460292,
+      "dropped": 21
+    },
+    {
+      "filter": "nway_finite_ls10_position",
+      "kept": 1460292,
+      "dropped": 0
+    },
+    {
+      "filter": "nway_matched_within_radius",
+      "kept": 135317,
+      "dropped": 1324975
+    },
+    {
+      "filter": "nway_p_any_reliability",
+      "kept": 131335,
+      "dropped": 3982
+    },
+    {
+      "filter": "collision_losers_dropped",
+      "kept": 131314,
+      "dropped": 21
+    }
+  ],
+  "extra": {
+    "radius_arcsec": 1.0,
+    "main_survey_releases": [
+      9010,
+      9011,
+      9012
+    ],
+    "match": {
+      "candidate_pairs": 138115,
+      "nway_rows_matched": 135317,
+      "nway_rows_with_2plus_candidates": 2767,
+      "flipped_by_main_survey_preference": 2278,
+      "median_sep_arcsec": 0.001876391706783145,
+      "p99_sep_arcsec": 0.06307864579833951
+    },
+    "reliability": {
+      "calibrated_kept": 128717,
+      "calibrated_dropped": 3668,
+      "uncalibrated_kept": 2618,
+      "uncalibrated_dropped": 314,
+      "uncalibrated_p_any_min": 0.05
+    },
+    "shared_targets": {
+      "shared_target_groups": 23,
+      "split_source_groups": 2,
+      "split_source_rows": 4,
+      "collision_groups": 21,
+      "collision_rows_dropped": 21,
+      "largest_group": 2,
+      "split_source_max_sep_arcsec": 15.0
+    },
+    "census": {
+      "QSO": 110402,
+      "GALAXY": 18958,
+      "STAR": 1954
+    },
+    "output": {
+      "path": "/h/rditella/aion-flow_v2/data/work/crossmatch.parquet",
+      "bytes": 29121953,
+      "sha256": "0a895375f05b5d70e38e9d670413e699a076c1370c4566aafc014bc614e6d784"
+    },
+    "nway_inflated": {
+      "path": "/h/rditella/aion-flow_v2/data/work/eRASSc3_Main_LS10_Public_27Jul2026.fits",
+      "bytes": 1785499200,
+      "sha256": "b4eed06143c9cf7d0a2ae0a7e672b3853a9cd801b3442377ba15444d5347cac5"
+    }
+  }
+}
