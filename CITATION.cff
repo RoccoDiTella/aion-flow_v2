@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this pipeline, please cite the paper it supports and this repository."
+title: "aion-flow_v2: data pipeline for probabilistic probes of galaxy evolution with the AION foundation model"
+type: software
+version: 0.1.0
+date-released: "2026-09-10"
+license: MIT
+authors:
+  - family-names: "Di Tella"
+    given-names: "Rocco"
+# The paper's citation (title, authors, venue) is added here at publication.
