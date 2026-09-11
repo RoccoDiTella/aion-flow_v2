@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures fetch clean-raw crossmatch labels spectra cutouts
+.PHONY: help test lint fixtures fetch clean-raw crossmatch labels spectra cutouts manifest_split
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -43,3 +43,6 @@ spectra:  ## step 3: fetch DESI coadd spectra into shards and merge -> work/spec
 
 cutouts:  ## step 4: fetch Legacy Survey cutouts, one FITS per target -> work/cutouts/ (LIMIT=N for a smoke; ~8 days in full)
 	$(PY) -m aionflow_data.fetch_cutouts --config $(CONFIG) $(if $(LIMIT),--limit $(LIMIT),)
+
+manifest_split:  ## step 5: presence flags, the sample, component-grouped keyed split -> work/manifest.csv, work/split.csv
+	$(PY) -m aionflow_data.manifest_split --config $(CONFIG)
