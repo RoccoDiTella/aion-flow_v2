@@ -1,9 +1,9 @@
 {
   "step": "crossmatch",
-  "written_utc": "2026-09-11T12:40:04+00:00",
+  "written_utc": "2026-09-11T14:53:57+00:00",
   "config": {
     "path": "/h/rditella/aion-flow_v2/config.yaml",
-    "sha256": "cb6eb655f07a246a0c6ae1aa010210912a6df6f9bb26cd6a53aceb421c4b5333"
+    "sha256": "db11ece025587349bffb903e637b3a5d7b13ce5aa40bf9bcb21ca66a9c2d87ef"
   },
   "inputs": {
     "nway": {
@@ -76,6 +76,7 @@
       "nway_rows_matched": 135317,
       "nway_rows_with_2plus_candidates": 2767,
       "flipped_by_main_survey_preference": 2278,
+      "matched_to_main_survey": 132914,
       "median_sep_arcsec": 0.001876391706783145,
       "p99_sep_arcsec": 0.06307864579833951
     },
@@ -102,8 +103,8 @@
     },
     "output": {
       "path": "/h/rditella/aion-flow_v2/data/work/crossmatch.parquet",
-      "bytes": 29121953,
-      "sha256": "0a895375f05b5d70e38e9d670413e699a076c1370c4566aafc014bc614e6d784"
+      "bytes": 19149692,
+      "sha256": "abf3a103b2e63ab929ec6d09531f6c74410cf50d1ca98b2b7ed42e08336db620"
     },
     "nway_inflated": {
       "path": "/h/rditella/aion-flow_v2/data/work/eRASSc3_Main_LS10_Public_27Jul2026.fits",
