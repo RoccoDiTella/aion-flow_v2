@@ -119,15 +119,26 @@ def readout(width: int = WIDTH, hidden: int = HIDDEN, context: int = CONTEXT,
 
 # ----------------------------------------------------------------------------- the probe
 
+def backbone_width(backbone) -> int:
+    """The residual width the CLS has to share with the data tokens."""
+    norm = getattr(backbone, "encoder_norm", None)
+    shape = getattr(norm, "normalized_shape", None)
+    if not shape:
+        raise EncoderError("this backbone has no encoder_norm to take a width from")
+    return int(shape[0])
+
+
 class Probe(nn.Module):
     """The frozen backbone, the CLS token that reads it, and one readout per head."""
 
-    def __init__(self, backbone, run: Run, width: int = WIDTH, rank: int = RANK):
+    def __init__(self, backbone, run: Run, rank: int = RANK):
         super().__init__()
+        width = backbone_width(backbone)
         self.backbone = backbone.eval().requires_grad_(False)
         self.cls = nn.Parameter(torch.randn(width) * CLS_INIT_STD)
         self.reads = nn.ModuleList(BlockRead(width, rank) for _ in backbone.encoder)
         self.readouts = nn.ModuleDict({head.name: readout(width) for head in run.heads})
+        self.width = width
 
     def train(self, mode: bool = True):
         """The backbone never leaves eval: it is frozen, dropout included."""

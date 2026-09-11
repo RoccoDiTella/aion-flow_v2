@@ -63,7 +63,7 @@ class ShapedBackbone(nn.Module):
     """Only the shape of AION-1-B: twelve blocks, so a probe built on it has exactly
     the trained parameters the paper counts, with no 318M of frozen weights to build."""
 
-    def __init__(self, depth: int = 12):
+    def __init__(self, depth: int = 12, width: int = 768):
         super().__init__()
         self.encoder = nn.ModuleList(nn.Identity() for _ in range(depth))
-        self.encoder_norm = nn.Identity()
+        self.encoder_norm = nn.LayerNorm(width)

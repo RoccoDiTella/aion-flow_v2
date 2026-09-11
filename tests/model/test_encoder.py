@@ -121,7 +121,7 @@ def test_the_read_refuses_a_backbone_the_paper_does_not_describe():
 def probe():
     torch.manual_seed(0)
     backbone = FakeBackbone(width=SMALL, heads=HEADS, depth=DEPTH)
-    return Probe(backbone, load_run("configs/marginals.yaml"), width=SMALL), backbone
+    return Probe(backbone, load_run("configs/marginals.yaml")), backbone
 
 
 def test_the_probe_leaves_the_backbone_stream_bit_identical(probe):
