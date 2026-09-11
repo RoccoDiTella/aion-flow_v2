@@ -18,11 +18,20 @@ from pathlib import Path
 
 import yaml
 
+from aionflow_data.common import REPO_ROOT
+
 from .data import TARGETS
+
+CONFIGS = REPO_ROOT / "configs"
 
 
 class ConfigError(ValueError):
     pass
+
+
+def recipe_path(name: str) -> Path:
+    """A run recipe by name, found next to the repository and not the caller's cwd."""
+    return CONFIGS / f"{name}.yaml"
 
 
 @dataclass(frozen=True)

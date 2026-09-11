@@ -41,7 +41,7 @@ from torch.utils.data import Dataset
 from aionflow_data.common import load_config
 from aionflow_data.line_features import FEATURES as LINE_FEATURES
 
-from .config import TRAINING, load_run
+from .config import TRAINING, load_run, recipe_path
 from .data import Split, Standardizer
 from .encoder import DROPOUT, HIDDEN
 from .flows import CONTEXT, FlowHead
@@ -49,7 +49,7 @@ from .objective import Heads
 from .train import CHECKPOINT, fit, validation_masks
 
 LINES = ("oiii_5007", "nev_3426", "halpha", "hbeta")
-RECIPE = "configs/baseline.yaml"
+RECIPE = recipe_path("baseline")
 
 
 class BaselineError(RuntimeError):
@@ -181,7 +181,7 @@ def load(run_dir: str | Path, work: str | Path, device: str = "cpu"):
     checkpoint = torch.load(run_dir / CHECKPOINT, map_location=device, weights_only=False)
     standardizer = Standardizer.from_dict(checkpoint["standardizer"])
     scaling = json.loads((run_dir / "lines.json").read_text())
-    model = BaselineModel(load_run(Path("configs") / f"{checkpoint['run']}.yaml"),
+    model = BaselineModel(load_run(recipe_path(checkpoint["run"])),
                           standardizer).to(device)
     model.load_state_dict(checkpoint["model"])
     model.eval()

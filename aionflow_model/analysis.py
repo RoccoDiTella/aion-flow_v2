@@ -213,10 +213,10 @@ def log_ssfr_independent(flows, contexts, s: torch.Tensor, standardizer: Standar
 # ----------------------------------------------------------------------------- the run
 
 def load_model(run_dir: Path, backbone, device: str) -> Model:
-    from .config import load_run
+    from .config import load_run, recipe_path
     checkpoint = torch.load(run_dir / CHECKPOINT, map_location=device, weights_only=False)
     standardizer = Standardizer.from_dict(checkpoint["standardizer"])
-    model = Model(backbone, load_run(Path("configs") / f"{checkpoint['run']}.yaml"),
+    model = Model(backbone, load_run(recipe_path(checkpoint["run"])),
                   standardizer).to(device)
     model.load_state_dict(checkpoint["model"])
     return model.eval()

@@ -43,7 +43,7 @@ import torch
 
 from aionflow_data.common import load_config
 
-from .config import Head, load_run
+from .config import Head, load_run, recipe_path
 from .data import (
     RATE_TARGETS,
     SCALAR_TARGETS,
@@ -246,7 +246,7 @@ def run(cfg: dict, run_dir: str | Path, *, device: str = "cpu", chunk: int = 448
             if backbone is None:
                 from .encoder import load_backbone
                 backbone = load_backbone()
-            recipe = load_run(Path("configs") / f"{checkpoint['run']}.yaml")
+            recipe = load_run(recipe_path(checkpoint["run"]))
             model = Model(backbone, recipe, standardizer).to(device)
             model.load_state_dict(checkpoint["model"])
             model.eval()
