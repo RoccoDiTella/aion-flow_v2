@@ -28,3 +28,6 @@ data/fixture_run/
 *.log
 nohup.out
 *.pdf
+
+# the working plan stays with the maintainers; docs/DATA.md is the released contract
+docs/PLAN.md
