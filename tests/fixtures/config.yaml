@@ -72,6 +72,6 @@ stage:
   spectra_compression_level: 4
 paths:
   raw: .
-  work: out/work
-  staged: out/staged
-  provenance: out/provenance
+  work: ../../data/fixture_run/work
+  staged: ../../data/fixture_run/staged
+  provenance: ../../data/fixture_run/provenance

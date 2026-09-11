@@ -698,8 +698,11 @@ class Builder:
             path = self.out / fname
             cfg["inputs"][name] = {"file": fname, "url": f"fixture://{fname}",
                                    "bytes": path.stat().st_size, "md5": md5(path)}
-        cfg["paths"] = {"raw": ".", "work": "out/work", "staged": "out/staged",
-                        "provenance": "out/provenance"}
+        # outputs land under the repository's gitignored data/fixture_run when a step is
+        # run on this config by hand; the tests redirect them to a temp directory
+        cfg["paths"] = {"raw": ".", "work": "../../data/fixture_run/work",
+                        "staged": "../../data/fixture_run/staged",
+                        "provenance": "../../data/fixture_run/provenance"}
         cfg["archives"]["desi_coadd_url"] = "coadd/coadd-{survey}-{program}-{pix}.fits"
         cfg["cutouts"]["size"] = CUTOUT_SIZE
         cfg["spectra"]["workers"] = 2
