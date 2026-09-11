@@ -17,7 +17,7 @@ as "not found") is recorded as an empty shard. Transient failures leave no shard
 and block the merge; rerun the same command to retry them.
 
 When every group has a shard, the shards are merged into <work>/spectra/source.h5
-(`desi_targetid`, `spectra`, `spectra_ivar`, `spectra_lambda`); a target observed
+(`targetid`, `spectra`, `spectra_ivar`, `spectra_lambda`); a target observed
 in two groups keeps the copy with more positive-ivar pixels. The merge streams
 one shard at a time. The ledger data/provenance/spectra.json records the counts.
 """
@@ -263,7 +263,7 @@ def merge(shard_dir: Path, out: Path, grid: Grid, log=print) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".part")
     with h5py.File(tmp, "w") as h:
-        d_tid = h.create_dataset("desi_targetid", shape=(n_unique,), dtype=np.int64)
+        d_tid = h.create_dataset("targetid", shape=(n_unique,), dtype=np.int64)
         kw = dict(shape=(n_unique, grid.nbin), dtype=np.float32,
                   chunks=(min(64, n_unique), grid.nbin), compression="lzf")
         d_flux = h.create_dataset("spectra", **kw)
@@ -328,7 +328,7 @@ def run(cfg: dict, *, limit_groups: int | None = None, workers: int | None = Non
     if not no_merge:
         stats["merge"] = merge(shard_dir, source, grid, log=log)
         with h5py.File(source, "r") as h:
-            have = set(h["desi_targetid"][:].tolist())
+            have = set(h["targetid"][:].tolist())
         stats["targets_without_spectrum"] = int(
             (~frame.drop_duplicates("targetid")["targetid"].isin(have)).sum())
         write_ledger(STEP, cfg, inputs={"crossmatch": xm_path},

@@ -5,15 +5,12 @@
 Every check is named and recorded in data/provenance/validate.json with its
 verdict and a detail line; the exit code is non-zero if any check fails.
 Checks: the three files exist; each carries exactly the contract datasets with
-the contract dtypes and consistent shapes; no label dataset is staged; every
-dataset is chunked along rows only; targetids are unique within and across
-splits and equal split.csv; flags, redshift and source_row agree with the
-manifest; the flags agree with the content (a zero frame iff has_image is
-false, every staged row has a spectrum, has_z follows the redshift rule);
-values are physical (finite spectra wherever ivar > 0, non-negative ivar,
-finite images, positions on the sky); the split fractions are within the
-configured tolerance; and labels.csv carries the trainer's columns for every
-staged target, with its finite counts reported.
+the contract dtypes and consistent shapes; targetids are unique within and
+across splits and equal split.csv; the split sizes are the rounded fractions;
+flags and redshift agree with the manifest; values are physical (finite
+spectra wherever ivar > 0, non-negative ivar, finite non-zero images, the
+configured wavelength grid, has_z following the redshift rule); and labels.csv
+carries the label columns for every staged target, with its finite counts.
 """
 
 from __future__ import annotations
@@ -26,36 +23,20 @@ import numpy as np
 import pandas as pd
 
 from .common import ensure_dirs, load_config, step_parser, write_ledger
+from .labels import LABEL_COLUMNS
 from .labels import OUTPUT as LABELS_OUTPUT
-from .manifest_split import MANIFEST, PRESENCE_FLAGS, SPLIT, SPLITS
-from .stage import IMAGE_BANDS, SPLIT_FILE
+from .manifest_split import MANIFEST, SPLIT, SPLITS
+from .stage import FLAGS, IMAGE_BANDS, SPLIT_FILE
 
 STEP = "validate"
 CONTRACT = {
-    "source_row": "int64", "desi_targetid": "int64", "spectra": "float32",
-    "spectra_ivar": "float32", "spectra_lambda": "float32", "redshift": "float32",
-    "flux_w1": "float32", "flux_w2": "float32", "flux_w3": "float32",
-    "target_ra": "float32", "target_dec": "float32", "image_flux": "float32",
-    "has_spectrum": "bool", "has_z": "bool", "has_wise": "bool", "has_image": "bool",
+    "targetid": "int64", "spectra": "float32", "spectra_ivar": "float32",
+    "spectra_lambda": "float32", "redshift": "float32", "flux_w1": "float32",
+    "flux_w2": "float32", "flux_w3": "float32", "image_flux": "float32",
+    "has_z": "bool", "has_wise": "bool",
 }
-FORBIDDEN = ("log_ml_flux_1", "log_lx", "ml_flux_1", "log_sfr", "logmstar_cigale",
-             "flux_sig_lo", "flux_sig_hi", "det_like_0", "ape_cts_1", "hr32_u", "logmstar")
-TRAINER_COLUMNS = (
-    ["targetid", "log_ml_flux_1", "flux_sig_lo", "flux_sig_hi", "log_lx", "det_like_0", "z",
-     "spectype", "ero_detuid", "log_sfr", "log_sfr_sig_lo", "log_sfr_sig_hi",
-     "logmstar_cigale", "logmstar_cigale_sig_lo", "logmstar_cigale_sig_hi"]
-    + [f"log_flux_p{b}{s}" for b in (1, 2, 3, 4) for s in ("", "_sig_lo", "_sig_hi")]
-    + [f"det_like_p{b}" for b in (1, 2, 3, 4)]
-    + [f"ape_{q}_{b}" for b in ("1", "p1", "p2", "p3", "p4") for q in ("cts", "bkg", "exp")]
-)
-LABEL_COUNT_COLUMNS = ("log_ml_flux_1", "log_lx", "log_flux_p1", "log_flux_p2", "log_flux_p3",
-                       "log_flux_p4", "log_sfr", "logmstar_cigale")
-
-
-def _by_target(manifest: pd.DataFrame) -> pd.DataFrame:
-    """The sample rows indexed by targetid (unique by construction; the full manifest is
-    not, since a split-source pair shares one target)."""
-    return manifest[manifest["in_sample"].astype(bool)].set_index("targetid")
+LABEL_COUNT_COLUMNS = ("log_flux_1", "log_lx", "log_flux_p2", "log_flux_p3", "log_sfr",
+                       "logmstar_cigale")
 
 
 class Report:
@@ -65,7 +46,7 @@ class Report:
 
     def check(self, name: str, ok: bool, detail: str = "") -> bool:
         self.checks.append({"check": name, "passed": bool(ok), "detail": detail})
-        self.log(f"[validate] {'PASS' if ok else 'FAIL'}  {name:36s} {detail}")
+        self.log(f"[validate] {'PASS' if ok else 'FAIL'}  {name:28s} {detail}")
         return bool(ok)
 
     @property
@@ -75,6 +56,10 @@ class Report:
     @property
     def failed(self) -> list[str]:
         return [c["check"] for c in self.checks if not c["passed"]]
+
+
+def _sample(manifest: pd.DataFrame) -> pd.DataFrame:
+    return manifest[manifest["in_sample"].astype(bool)].set_index("targetid")
 
 
 # ----------------------------------------------------------------------------- checks
@@ -102,7 +87,7 @@ def check_schema(rep: Report, handles: dict, cfg: dict) -> None:
         if keys != set(CONTRACT):
             problems.append(f"{split}: datasets {sorted(keys ^ set(CONTRACT))}")
             continue
-        n = h["desi_targetid"].shape[0]
+        n = h["targetid"].shape[0]
         for key, dtype in CONTRACT.items():
             if str(h[key].dtype) != dtype:
                 problems.append(f"{split}/{key}: dtype {h[key].dtype} != {dtype}")
@@ -120,20 +105,10 @@ def check_schema(rep: Report, handles: dict, cfg: dict) -> None:
             problems.append(f"{split}: image attrs {bands}, {h.attrs.get('image_size')}")
     rep.check("schema", not problems, "; ".join(problems[:4]) or
               f"{len(CONTRACT)} datasets, nbin {nbin}, image {size} px")
-    forbidden = [f"{s}/{k}" for s, h in handles.items() for k in FORBIDDEN if k in h]
-    rep.check("no_labels_staged", not forbidden, "; ".join(forbidden) or "inputs only")
-    bad_chunks = []
-    for split, h in handles.items():
-        for key, ds in h.items():
-            if key == "spectra_lambda" or ds.shape[0] == 0:
-                continue
-            if ds.chunks is None or tuple(ds.chunks[1:]) != tuple(ds.shape[1:]):
-                bad_chunks.append(f"{split}/{key}: {ds.chunks}")
-    rep.check("row_aligned_chunks", not bad_chunks, "; ".join(bad_chunks[:4]) or "every dataset")
 
 
 def check_split(rep: Report, handles: dict, split_frame: pd.DataFrame, cfg: dict) -> None:
-    staged = {s: h["desi_targetid"][:] for s, h in handles.items()}
+    staged = {s: h["targetid"][:] for s, h in handles.items()}
     problems = []
     seen: set[int] = set()
     for split, tids in staged.items():
@@ -147,105 +122,89 @@ def check_split(rep: Report, handles: dict, split_frame: pd.DataFrame, cfg: dict
         if expected != set(tids.tolist()):
             problems.append(f"{split}: {len(expected ^ set(tids.tolist()))} targetids differ "
                             f"from split.csv")
-    rep.check("targetids_unique_and_match_split", not problems, "; ".join(problems[:4]) or
+    rep.check("targetids", not problems, "; ".join(problems[:4]) or
               f"{len(seen):,} targets staged once each")
     n = sum(t.size for t in staged.values())
-    drift = {s: staged[s].size / max(n, 1) - f for s, f in zip(SPLITS, cfg["split"]["fractions"])}
-    tol = float(cfg["split"]["tolerance"])
-    rep.check("split_fractions", all(abs(d) <= tol for d in drift.values()),
-              " ".join(f"{s} {staged[s].size:,} ({drift[s]:+.3f})" for s in SPLITS))
+    edges = np.round(np.cumsum(cfg["split"]["fractions"]) * n).astype(int)
+    want = np.diff(np.concatenate([[0], edges]))
+    got = np.array([staged[s].size for s in SPLITS])
+    rep.check("split_sizes", bool((np.abs(got - want) <= 1).all()),
+              " ".join(f"{s} {g:,}" for s, g in zip(SPLITS, got)))
 
 
 def check_manifest_agreement(rep: Report, handles: dict, manifest: pd.DataFrame) -> None:
-    man = _by_target(manifest)
+    man = _sample(manifest)
     problems = []
     for split, h in handles.items():
-        tids = h["desi_targetid"][:]
-        rows = man.reindex(tids)
+        rows = man.reindex(h["targetid"][:])
         if rows["in_sample"].isna().any():
             problems.append(f"{split}: staged targetids missing from the manifest")
             continue
         if not (rows["split"] == split).all():
             problems.append(f"{split}: manifest split disagrees")
-        if not np.array_equal(h["source_row"][:], rows["source_row"].to_numpy(np.int64)):
-            problems.append(f"{split}: source_row disagrees")
-        for flag in PRESENCE_FLAGS:
+        for flag in FLAGS:
             if not np.array_equal(h[flag][:], rows[flag].to_numpy(bool)):
                 problems.append(f"{split}: {flag} disagrees")
         if not np.array_equal(h["redshift"][:], rows["z"].to_numpy(np.float64).astype(np.float32)):
             problems.append(f"{split}: redshift disagrees")
     rep.check("manifest_agreement", not problems, "; ".join(problems[:4]) or
-              "flags, redshift and source_row match")
+              "flags and redshift match")
 
 
 def check_content(rep: Report, handles: dict, manifest: pd.DataFrame, cfg: dict) -> None:
-    man = _by_target(manifest)
+    man = _sample(manifest)
     lam0, dlam, nbin = (float(cfg["spectra"]["lam0_angstrom"]),
                         float(cfg["spectra"]["dlam_angstrom"]), int(cfg["spectra"]["nbin"]))
     grid = (lam0 + dlam * np.arange(nbin)).astype(np.float32)
-    flag_problems, value_problems = [], []
+    problems = []
     for split, h in handles.items():
-        n = h["desi_targetid"].shape[0]
-        has_image = h["has_image"][:]
-        nonzero = np.zeros(n, bool)
+        n = h["targetid"].shape[0]
         for lo in range(0, n, 256):
             block = h["image_flux"][lo:lo + 256]
-            nonzero[lo:lo + block.shape[0]] = block.reshape(block.shape[0], -1).any(axis=1)
             if not np.isfinite(block).all():
-                value_problems.append(f"{split}: non-finite image pixels")
-        if not np.array_equal(nonzero, has_image):
-            flag_problems.append(f"{split}: has_image disagrees with image content on "
-                                 f"{int((nonzero != has_image).sum())} rows")
-        if not h["has_spectrum"][:].all():
-            flag_problems.append(f"{split}: has_spectrum false on a staged row")
+                problems.append(f"{split}: non-finite image pixels")
+            if not block.reshape(block.shape[0], -1).any(axis=1).all():
+                problems.append(f"{split}: an all-zero image")
         z = h["redshift"][:]
-        zwarn = man.reindex(h["desi_targetid"][:])["zwarn"].to_numpy(np.float64)
-        rule = np.isfinite(z) & (z > 0) & (zwarn == 0)
-        if not np.array_equal(rule, h["has_z"][:]):
-            flag_problems.append(f"{split}: has_z disagrees with the redshift rule")
+        zwarn = man.reindex(h["targetid"][:])["zwarn"].to_numpy(np.float64)
+        if not np.array_equal(np.isfinite(z) & (z > 0) & (zwarn == 0), h["has_z"][:]):
+            problems.append(f"{split}: has_z disagrees with the redshift rule")
         flux, ivar = h["spectra"][:], h["spectra_ivar"][:]
         if (ivar < 0).any() or not np.isfinite(ivar).all():
-            value_problems.append(f"{split}: negative or non-finite ivar")
+            problems.append(f"{split}: negative or non-finite ivar")
         if not np.isfinite(flux[ivar > 0]).all():
-            value_problems.append(f"{split}: non-finite spectra where ivar > 0")
+            problems.append(f"{split}: non-finite spectra where ivar > 0")
         if not np.array_equal(h["spectra_lambda"][:], grid):
-            value_problems.append(f"{split}: spectra_lambda is not the configured grid")
-        ra, dec = h["target_ra"][:], h["target_dec"][:]
-        if not (np.isfinite(ra).all() and np.isfinite(dec).all() and (ra >= 0).all()
-                and (ra < 360).all() and (np.abs(dec) <= 90).all()):
-            value_problems.append(f"{split}: positions off the sky")
+            problems.append(f"{split}: spectra_lambda is not the configured grid")
         if not (np.isfinite(z).all() and (np.abs(z) < 10).all()):
-            value_problems.append(f"{split}: implausible redshift")
-    rep.check("flags_vs_content", not flag_problems, "; ".join(flag_problems[:4]) or
-              "zero frames iff has_image false; has_z follows the rule")
-    rep.check("value_ranges", not value_problems, "; ".join(value_problems[:4]) or
-              "finite spectra where ivar > 0, finite images, positions on the sky")
+            problems.append(f"{split}: implausible redshift")
+    rep.check("content", not problems, "; ".join(sorted(set(problems))[:4]) or
+              "finite spectra where ivar > 0, finite non-zero images, has_z follows the rule")
 
 
-def check_sidecar(rep: Report, handles: dict, labels_path: Path, cfg: dict) -> dict:
+def check_labels(rep: Report, handles: dict, labels_path: Path, cfg: dict) -> dict:
     if not labels_path.is_file():
-        rep.check("sidecar", False, f"{labels_path} missing")
+        rep.check("labels", False, f"{labels_path} missing")
         return {}
     header = pd.read_csv(labels_path, nrows=0).columns
-    missing = [c for c in TRAINER_COLUMNS if c not in header]
+    missing = [c for c in ["targetid", *LABEL_COLUMNS] if c not in header]
     if missing:
-        rep.check("sidecar", False, f"labels.csv lacks {missing[:6]}")
+        rep.check("labels", False, f"labels.csv lacks {missing[:6]}")
         return {}
-    use = ["targetid", "z", "det_like_0"] + list(LABEL_COUNT_COLUMNS)
+    use = ["targetid", "det_like_0"] + list(LABEL_COUNT_COLUMNS)
     labels = pd.read_csv(labels_path, usecols=use).drop_duplicates("targetid").set_index("targetid")
-    staged = np.concatenate([h["desi_targetid"][:] for h in handles.values()])
-    covered = labels.index.isin(staged)
+    staged = np.concatenate([h["targetid"][:] for h in handles.values()])
     absent = int((~pd.Index(staged).isin(labels.index)).sum())
-    counts = {"staged_targets": int(staged.size), "labelled_targets": int(covered.sum())}
-    sub = labels[covered]
+    sub = labels[labels.index.isin(staged)]
+    counts = {"staged_targets": int(staged.size), "labelled_targets": int(len(sub))}
     for col in LABEL_COUNT_COLUMNS:
         counts[f"{col}_finite"] = int(np.isfinite(sub[col]).sum())
     det_min = float(cfg["labels"]["det_like_min"])
     counts[f"det_like_0_gt_{det_min:g}"] = int((sub["det_like_0"] > det_min).sum())
-    rep.check("sidecar", absent == 0,
+    rep.check("labels", absent == 0,
               f"{absent} staged targets without a label row" if absent else
-              f"{len(TRAINER_COLUMNS)} trainer columns; log_ml_flux_1 finite "
-              f"{counts['log_ml_flux_1_finite']:,}, log_sfr finite {counts['log_sfr_finite']:,}, "
+              f"log_flux_1 finite {counts['log_flux_1_finite']:,}, "
+              f"log_sfr finite {counts['log_sfr_finite']:,}, "
               f"logmstar_cigale finite {counts['logmstar_cigale_finite']:,}")
     return counts
 
@@ -271,12 +230,12 @@ def run(cfg: dict, log=print) -> dict:
                 check_split(rep, handles, split_frame, cfg)
                 check_manifest_agreement(rep, handles, manifest)
                 check_content(rep, handles, manifest, cfg)
-                counts = check_sidecar(rep, handles, labels_path, cfg)
-                man = _by_target(manifest)
+                counts = check_labels(rep, handles, labels_path, cfg)
+                man = _sample(manifest)
                 for split, h in handles.items():
-                    census[split] = (man.reindex(h["desi_targetid"][:])["spectype"]
+                    census[split] = (man.reindex(h["targetid"][:])["spectype"]
                                      .value_counts().to_dict())
-                    counts[f"rows_{split}"] = int(h["desi_targetid"].shape[0])
+                    counts[f"rows_{split}"] = int(h["targetid"].shape[0])
         finally:
             for h in handles.values():
                 h.close()

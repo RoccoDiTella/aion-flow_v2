@@ -62,33 +62,16 @@ def test_fetches_one_file_per_target_at_the_target_position(tmp_path, served, pl
     size = cfg["cutouts"]["size"]
     for path in files:
         assert fetch_cutouts.read_cutout(path, size).shape == (4, size, size)
-    # the request carries the DESI fibre position (the default) and the cutout parameters
+    # the request carries the DESI target position and the cutout parameters
     gets = [r[1] for r in server.requests]
     assert len(gets) == n_targets
     frame = pd.read_parquet(tmp_path / "work" / crossmatch.OUTPUT).drop_duplicates("targetid")
     for row in frame.itertuples():
-        assert any(f"ra={row.fiber_ra:.6f}&dec={row.fiber_dec:.6f}" in g for g in gets)
-    off = frame[frame["fiber_ra"] != frame["target_ra"]].iloc[0]
-    assert not any(f"ra={off.target_ra:.6f}&dec={off.target_dec:.6f}" in g for g in gets)
+        assert any(f"ra={row.target_ra:.6f}&dec={row.target_dec:.6f}" in g for g in gets)
     assert all(f"layer=ls-dr10&pixscale=0.262&size={size}&bands=griz" in g for g in gets)
     ledger = common.read_ledger("cutouts", cfg)
     assert ledger["counts"]["fetched"] == n_targets and ledger["extra"]["failures"] == []
-    assert ledger["extra"]["cutout"]["size"] == size and ledger["extra"]["position"] == "fiber"
-
-
-def test_target_position_is_a_config_choice(tmp_path, served):
-    with serve(served) as (server, url):
-        cfg = make_cfg(tmp_path, url, position="target")
-        fetch_cutouts.run(cfg, limit=5, **FAST, **QUIET)
-    frame = pd.read_parquet(tmp_path / "work" / crossmatch.OUTPUT).drop_duplicates("targetid")
-    gets = [r[1] for r in server.requests]
-    for row in frame.head(5).itertuples():
-        assert any(f"ra={row.target_ra:.6f}&dec={row.target_dec:.6f}" in g for g in gets)
-    assert common.read_ledger("cutouts", cfg)["extra"]["position"] == "target"
-    with serve(served) as (_, url):
-        cfg = make_cfg(tmp_path / "bad", url, position="centroid")
-        with pytest.raises(fetch_cutouts.CutoutError, match="position"):
-            fetch_cutouts.run(cfg, limit=1, **FAST, **QUIET)
+    assert ledger["extra"]["cutout"]["size"] == size
 
 
 def test_rerun_skips_present_files(tmp_path, served):
@@ -111,13 +94,13 @@ def test_limit_fetches_only_the_first_n(tmp_path, served):
     assert common.read_ledger("cutouts", cfg)["extra"]["limit"] == 3
 
 
-def test_small_response_is_rejected_and_counted(tmp_path, served):
-    (served / "cutout").write_bytes(b"x" * 500)
+def test_non_image_response_is_rejected_and_counted(tmp_path, served):
+    (served / "cutout").write_bytes(b"<html>rate limited</html>")
     with serve(served) as (server, url):
         cfg = make_cfg(tmp_path, url)
         stats = fetch_cutouts.run(cfg, limit=1, **FAST, **QUIET)
     assert stats["fetched"] == 0 and stats["failed"] == 1
-    assert "500 bytes" in stats["failures"][0][1]
+    assert "not a FITS image" in stats["failures"][0][1]
     assert len(server.requests) == 5                     # every attempt was made
     assert list(cutout_dir(tmp_path).glob("*")) == []
 
@@ -171,11 +154,14 @@ def test_read_cutout_validates(tmp_path, planted):
     fits.PrimaryHDU(data, header).writeto(bad)
     with pytest.raises(fetch_cutouts.BadCutout, match="non-finite"):
         fetch_cutouts.read_cutout(bad, 32)
+    text = tmp_path / "text.fits"
+    text.write_bytes(b"not a fits file")
+    with pytest.raises(fetch_cutouts.BadCutout, match="not a FITS image"):
+        fetch_cutouts.read_cutout(text, 32)
 
 
-def test_cli(tmp_path, served):
-    with serve(served) as (_, url):
-        cfg = make_cfg(tmp_path, url, sleep_s=0.0, backoff_s=0.01)
-        rc = fetch_cutouts.main(["--config", cfg["_config_path"], "--limit", "2",
-                                 "--sleep", "0"])
-    assert rc == 0 and len(list(cutout_dir(tmp_path).glob("*.fits"))) == 2
+def test_missing_crossmatch_and_cli(tmp_path):
+    cfg = make_fx_cfg(tmp_path)
+    with pytest.raises(fetch_cutouts.CutoutError, match="missing input"):
+        fetch_cutouts.run(cfg, **FAST, **QUIET)
+    assert fetch_cutouts.main(["--config", cfg["_config_path"]]) == 1

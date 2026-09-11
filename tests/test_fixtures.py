@@ -30,7 +30,7 @@ def _table(name: str) -> fits.FITS_rec:
 def test_row_counts_match_planted(planted):
     for name, fname in (("nway", "nway.fits"), ("main", "main.fits"),
                         ("zall_pix", "zall_pix.fits"), ("cigale", "cigale.fits")):
-        assert common.fits_nrows(FIXTURES / fname) == planted["n_rows"][name]
+        assert len(_table(fname)) == planted["n_rows"][name]
 
 
 def test_nway_scenarios(planted):
@@ -104,10 +104,10 @@ def test_main_scenarios(planted):
     i = np.flatnonzero(det == S["ape_bkg_negative"]["detuid"])[0]
     assert t["APE_BKG_P2"][i] < 0
     i = np.flatnonzero(det == S["flux_consistent_with_zero"]["detuid"])[0]
-    assert t["ML_FLUX_LOWERR_P4"][i] >= t["ML_FLUX_P4"][i]
-    zero = [np.flatnonzero(det == d)[0] for d in S["zero_counts_p4"]["detuids"]]
-    assert all(t["APE_CTS_P4"][z] == 0 for z in zero)
-    assert all(t["APE_POIS_P4"][z] == pytest.approx(-9.99) for z in zero)
+    assert t["ML_FLUX_LOWERR_P3"][i] >= t["ML_FLUX_P3"][i]
+    zero = [np.flatnonzero(det == d)[0] for d in S["zero_counts_p2"]["detuids"]]
+    assert all(t["APE_CTS_P2"][z] == 0 for z in zero)
+    assert all(t["APE_POIS_P2"][z] == pytest.approx(-9.99) for z in zero)
     # every NWAY detection has a Main row
     nway_det = set(np.char.strip(_table("nway.fits")["DETUID"].astype(str)))
     assert nway_det <= set(det)
@@ -178,7 +178,8 @@ def test_expected_counts_are_self_consistent(planted):
     assert e["crossmatch_rows"] == sum(e["crossmatch_census"].values())
     assert e["sample_rows"] == sum(e["sample_census"].values()) == len(e["sample_targetids"])
     assert len(e["split_source_detuids"]) == 2
-    assert e["sample_rows"] == e["crossmatch_rows"] - 2 - 1
+    # two split-source rows, one row without a spectrum, one without a cutout
+    assert e["sample_rows"] == e["crossmatch_rows"] - 2 - 1 - 1
 
 
 def test_fixture_config_loads_and_describes_the_files(fx_cfg):
@@ -186,9 +187,9 @@ def test_fixture_config_loads_and_describes_the_files(fx_cfg):
         entry = fx_cfg["inputs"][name]
         path = FIXTURES / entry["file"]
         assert path.stat().st_size == entry["bytes"]
-        assert common.md5(path) == entry["md5"]
+        assert common.file_digests(path)["md5"] == entry["md5"]
     assert fx_cfg["paths"]["raw"] == str(FIXTURES)
-    assert fx_cfg["split"]["tolerance"] == 0.5
+    assert fx_cfg["split"] == {"seed": 42, "fractions": [0.8, 0.1, 0.1]}
 
 
 # ----------------------------------------------------------------------------- determinism

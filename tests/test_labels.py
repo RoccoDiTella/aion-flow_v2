@@ -43,6 +43,12 @@ def _row(frame, detuid):
     return rows.iloc[0]
 
 
+def _by_tid(frame, tid):
+    rows = frame[frame["targetid"] == tid]
+    assert len(rows) >= 1
+    return rows.iloc[0]
+
+
 # ----------------------------------------------------------------------------- formulas
 
 def test_asymmetric_errors_by_hand():
@@ -78,33 +84,33 @@ def test_row_set_and_order_follow_the_crossmatch(run, planted):
     assert ledger["counts"]["rows_out"] == len(frame)
 
 
-def test_broad_band_flux_and_luminosity_against_the_catalogue(run, main_table, planted):
+def test_fluxes_and_luminosity_against_the_catalogue(run, main_table, planted):
     _, frame, _ = run
     for detuid in planted["scenarios"]["clean"]["detuids"][:5]:
         m = _main_row(main_table, detuid)
         r = _row(frame, detuid)
         f, lo, hi = (float(m["ML_FLUX_1"]), float(m["ML_FLUX_LOWERR_1"]),
                      float(m["ML_FLUX_UPERR_1"]))
-        assert r["log_ml_flux_1"] == pytest.approx(np.log10(f), rel=1e-6)
-        assert r["log_flux_1"] == r["log_ml_flux_1"]
-        assert r["flux_sig_lo"] == pytest.approx(-np.log10(1 - lo / f), rel=1e-5)
-        assert r["flux_sig_hi"] == pytest.approx(np.log10(1 + hi / f), rel=1e-5)
+        assert r["log_flux_1"] == pytest.approx(np.log10(f), rel=1e-6)
+        assert r["log_flux_1_sig_lo"] == pytest.approx(-np.log10(1 - lo / f), rel=1e-5)
+        assert r["log_flux_1_sig_hi"] == pytest.approx(np.log10(1 + hi / f), rel=1e-5)
         assert r["det_like_0"] == pytest.approx(float(m["DET_LIKE_0"]))
-        for b in (1, 2, 3, 4):
+        for b in (2, 3):
             assert r[f"det_like_p{b}"] == pytest.approx(float(m[f"DET_LIKE_P{b}"]))
             assert r[f"log_flux_p{b}"] == pytest.approx(np.log10(float(m[f"ML_FLUX_P{b}"])),
                                                         rel=1e-6)
         if r["z"] > 0:
             dl = Planck18.luminosity_distance(r["z"]).to(u.cm).value
-            assert r["log_lx"] == pytest.approx(r["log_ml_flux_1"] + np.log10(4 * np.pi * dl ** 2),
+            assert r["log_lx"] == pytest.approx(r["log_flux_1"] + np.log10(4 * np.pi * dl ** 2),
                                                 rel=1e-9)
+    assert not any(c.endswith(("_p1", "_p4")) for c in frame.columns)
 
 
 def test_luminosity_is_missing_at_nonpositive_redshift(run, planted):
     _, frame, ledger = run
     tid = planted["scenarios"]["z_nonpositive"]["targetid"]
-    r = frame[frame["targetid"] == tid].iloc[0]
-    assert np.isnan(r["log_lx"]) and np.isfinite(r["log_ml_flux_1"])
+    r = _by_tid(frame, tid)
+    assert np.isnan(r["log_lx"]) and np.isfinite(r["log_flux_1"])
     assert ledger["extra"]["xray"]["log_lx"]["z_le_0"] == 1
     assert ledger["counts"]["log_lx_finite"] == len(frame) - 1
 
@@ -123,26 +129,25 @@ def test_counts_integrity(run, main_table, planted):
     assert r["ape_bkg_p2"] == 0.0 and r["ape_bkg_negative_p2"] and pd.notna(r["ape_cts_p2"])
     assert ledger["extra"]["xray"]["p2"]["ape_bkg_negative_clipped"] == 1
     assert frame["ape_bkg_negative_p2"].sum() == 1
-    # zero counts are ordinary data
-    for detuid in S["zero_counts_p4"]["detuids"]:
+    # zero counts are ordinary data; the band's flux is gated by its detection likelihood
+    for detuid in S["zero_counts_p2"]["detuids"]:
         r = _row(frame, detuid)
-        assert r["ape_cts_p4"] == 0 and r["ape_pois_p4"] == pytest.approx(-9.99)
-    assert ledger["extra"]["xray"]["p4"]["ape_cts_zero"] == 3
+        assert r["ape_cts_p2"] == 0 and r["det_like_p2"] == 0.0
+    assert ledger["extra"]["xray"]["p2"]["ape_cts_zero"] == 3
     # counts are integers, never "45.0"
     assert str(frame["ape_cts_p3"].dtype) == "Int64"
     m = _main_row(main_table, S["clean"]["detuids"][0])
     r = _row(frame, S["clean"]["detuids"][0])
     assert r["ape_cts_p3"] == int(m["APE_CTS_P3"])
     assert r["ape_exp_p3"] == pytest.approx(float(m["APE_EXP_P3"]))
-    assert r["ml_eef_p3"] == pytest.approx(float(m["ML_EEF_P3"]))
 
 
 def test_flux_consistent_with_zero_is_not_a_measurement(run, planted):
     _, frame, ledger = run
     r = _row(frame, planted["scenarios"]["flux_consistent_with_zero"]["detuid"])
-    assert np.isnan(r["log_flux_p4"]) and np.isnan(r["log_flux_p4_sig_lo"])
-    assert np.isfinite(r["log_flux_p3"])
-    assert ledger["extra"]["xray"]["p4"]["flux_not_a_measurement"] == 1
+    assert np.isnan(r["log_flux_p3"]) and np.isnan(r["log_flux_p3_sig_lo"])
+    assert np.isfinite(r["log_flux_p2"])
+    assert ledger["extra"]["xray"]["p3"]["flux_not_a_measurement"] == 1
     assert ledger["extra"]["xray"]["1"]["flux_not_a_measurement"] == 0
 
 
@@ -170,12 +175,6 @@ def test_missing_detuid_in_main_is_an_error(tmp_path, planted):
 
 # ----------------------------------------------------------------------------- CIGALE
 
-def _by_tid(frame, tid):
-    rows = frame[frame["targetid"] == tid]
-    assert len(rows) >= 1
-    return rows.iloc[0]
-
-
 def test_cigale_gates_by_construction(run, planted):
     _, frame, ledger = run
     S = planted["scenarios"]
@@ -192,14 +191,14 @@ def test_cigale_gates_by_construction(run, planted):
     assert np.isfinite(r["logmstar_cigale"]) and np.isnan(r["log_sfr"])
     assert np.isnan(r["log_sfr_sig_lo"])
     r = _by_tid(frame, S["cigale_missing"]["targetid"])
-    assert np.isnan(r["logmstar_cigale"]) and np.isnan(r["cigale_chi2"])
-    assert pd.isna(r["cigale_spectype"])
+    assert np.isnan(r["logmstar_cigale"]) and np.isnan(r["log_sfr"])
     assert c["failed_fit"] == 1 and c["sentinel"] == 1
     assert c["broad_mass_pdf"] == 1 and c["broad_sfr_pdf"] == 1
     assert c["log_sfr"]["removed_by_max_sigma"] == 1
     assert c["logmstar_cigale"]["removed_by_max_sigma"] == 0
     stars = frame[frame["spectype"] == "STAR"]
     assert len(stars) == 2 and stars["logmstar_cigale"].isna().all()
+    assert ledger["counts"]["log_sfr_finite"] == int(np.isfinite(frame["log_sfr"]).sum())
 
 
 def test_cigale_duplicate_fit_prefers_the_same_observation(run, planted):
@@ -207,36 +206,14 @@ def test_cigale_duplicate_fit_prefers_the_same_observation(run, planted):
     S = planted["scenarios"]["cigale_two_fits"]
     r = _by_tid(frame, S["targetid"])
     assert r["logmstar_cigale"] == pytest.approx(S["chosen_logm"])
-    assert r["cigale_survey"] == "main" and r["cigale_program"] == "dark"
     assert ledger["extra"]["cigale"]["duplicate_fits_resolved"] == 1
-
-
-def test_specific_sfr_inherits_both_gates(run):
-    _, frame, ledger = run
-    both = np.isfinite(frame["logmstar_cigale"]) & np.isfinite(frame["log_sfr"])
-    assert np.array_equal(np.isfinite(frame["ref_log_ssfr"]), both)
-    diff = frame.loc[both, "log_sfr"] - frame.loc[both, "logmstar_cigale"]
-    assert np.allclose(frame.loc[both, "ref_log_ssfr"], diff)
-    assert ledger["counts"]["ref_log_ssfr_finite"] == int(both.sum())
-    assert ledger["counts"]["log_sfr_finite"] == int(np.isfinite(frame["log_sfr"]).sum())
 
 
 # ----------------------------------------------------------------------------- contract
 
-TRAINER_COLUMNS = (
-    ["targetid", "log_ml_flux_1", "flux_sig_lo", "flux_sig_hi", "log_lx", "det_like_0", "z",
-     "spectype", "ero_detuid", "log_sfr", "log_sfr_sig_lo", "log_sfr_sig_hi",
-     "logmstar_cigale", "logmstar_cigale_sig_lo", "logmstar_cigale_sig_hi"]
-    + [f"log_flux_p{b}{s}" for b in (1, 2, 3, 4) for s in ("", "_sig_lo", "_sig_hi")]
-    + [f"det_like_p{b}" for b in (1, 2, 3, 4)]
-    + [f"ape_{q}_{b}" for b in ("1", "p1", "p2", "p3", "p4") for q in ("cts", "bkg", "exp")]
-)
-
-
-def test_output_carries_the_trainer_contract_and_is_deterministic(run):
+def test_output_carries_the_label_contract_and_is_deterministic(run):
     cfg, frame, ledger = run
-    missing = [c for c in TRAINER_COLUMNS if c not in frame.columns]
-    assert not missing
+    assert not [c for c in labels.LABEL_COLUMNS if c not in frame.columns]
     for c in crossmatch.OUTPUT_COLUMNS:
         assert c in frame.columns
     out = common.ledger_path("labels", cfg).parent.parent / "work" / labels.OUTPUT

@@ -9,7 +9,7 @@ inputs:
     file: main.fits
     url: fixture://main.fits
     bytes: 34560
-    md5: 499797793782c85144c85cdb6f4ec18d
+    md5: f7c98e5143666f0be4954ae7fbb3b66b
   desi_zcat:
     file: zall_pix.fits
     url: fixture://zall_pix.fits
@@ -51,26 +51,16 @@ cutouts:
   pixscale: 0.262
   size: 32
   bands: griz
-  position: fiber
   sleep_s: 0.4
   backoff_s: 5.0
   max_backoff_s: 120.0
   timeout_s: 120.0
-  min_bytes: 10000
 split:
+  seed: 42
   fractions:
   - 0.8
   - 0.1
   - 0.1
-  tolerance: 0.5
-  hash:
-    algorithm: blake2b
-    digest_size: 8
-    salt: aion-flow-v2/2026-09-10
-stage:
-  chunk_target_bytes: 262144
-  spectra_compression: gzip
-  spectra_compression_level: 4
 paths:
   raw: .
   work: ../../data/fixture_run/work

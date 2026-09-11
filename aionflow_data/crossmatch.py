@@ -2,7 +2,7 @@
 
     python -m aionflow_data.crossmatch [--config CONFIG]
 
-Rules, in order (PLAN.md section 3):
+Rules, in order:
   NWAY   exact duplicate rows collapsed; NWAY_match_flag == 1 only; a DETUID that
          still has several primary rows keeps the highest NWAY_p_i, ties by
          NWAY_dist_post.
@@ -49,28 +49,19 @@ OUTPUT = "crossmatch.parquet"
 NWAY_COLUMNS = {
     "DETUID": "ero_detuid", "RA": "xray_ra", "DEC": "xray_dec",
     "LS10_RA": "ls10_ra", "LS10_DEC": "ls10_dec",
-    "LS10_RELEASE": "ls10_release", "LS10_BRICKID": "ls10_brickid", "LS10_OBJID": "ls10_objid",
-    "NWAY_p_any": "nway_p_any", "NWAY_p_i": "nway_p_i", "NWAY_p_single": "nway_p_single",
-    "NWAY_match_flag": "nway_match_flag", "NWAY_threshold6": "nway_threshold6",
-    "NWAY_dist_post": "nway_dist_post", "NWAY_dist_bayesfactor": "nway_dist_bayesfactor",
-    "NWAY_Separation_LS10_ERO": "nway_sep_arcsec",
+    "NWAY_p_any": "nway_p_any", "NWAY_p_i": "nway_p_i", "NWAY_match_flag": "nway_match_flag",
+    "NWAY_threshold6": "nway_threshold6", "NWAY_dist_post": "nway_dist_post",
     "LS10_flux_w1": "ls10_flux_w1", "LS10_flux_w2": "ls10_flux_w2", "LS10_flux_w3": "ls10_flux_w3",
     "LS10_flux_ivar_w1": "ls10_flux_ivar_w1", "LS10_flux_ivar_w2": "ls10_flux_ivar_w2",
     "LS10_flux_ivar_w3": "ls10_flux_ivar_w3",
-    "LS10_shape_r": "ls10_shape_r", "LS10_sersic": "ls10_sersic", "LS10_TYPE": "ls10_type",
-    "LS10_Xray_proba": "ls10_xray_proba", "Exgal_prob_STAREX": "exgal_prob_starex",
-    "class_gal_exgal": "class_gal_exgal", "simbad_known_galactic": "simbad_known_galactic",
 }
 DESI_COLUMNS = {
     "TARGET_RA": "target_ra", "TARGET_DEC": "target_dec",
-    "MEAN_FIBER_RA": "fiber_ra", "MEAN_FIBER_DEC": "fiber_dec",
     "SURVEY": "survey", "PROGRAM": "program", "HEALPIX": "healpix", "SPECTYPE": "spectype",
-    "Z": "z", "ZWARN": "zwarn", "DELTACHI2": "deltachi2",
+    "Z": "z", "ZWARN": "zwarn",
 }
-MATCH_COLUMNS = ["sep_arcsec", "n_candidates", "preferred_over_nearest", "desi_release",
-                 "is_main_survey", "reliability_branch", "split_source", "collision_group_size"]
-OUTPUT_COLUMNS = (["targetid"] + list(NWAY_COLUMNS.values()) + list(DESI_COLUMNS.values())
-                  + MATCH_COLUMNS)
+OUTPUT_COLUMNS = (["targetid"] + [c for c in NWAY_COLUMNS.values() if c != "nway_match_flag"]
+                  + list(DESI_COLUMNS.values()) + ["sep_arcsec", "split_source"])
 
 # desitarget.targetmask.encode_targetid: objid bits 0-21, brickid 22-41, release 42-57
 OBJID_BITS, BRICKID_BITS, RELEASE_BITS = 22, 20, 16
@@ -108,13 +99,12 @@ def decompress_if_needed(path: Path, work: Path, log=print) -> Path:
 
 # ----------------------------------------------------------------------------- inputs
 
-def load_nway(path: Path, led: FilterLedger | None = None,
-              log=print) -> tuple[pd.DataFrame, FilterLedger]:
+def load_nway(path: Path, log=print) -> tuple[pd.DataFrame, FilterLedger]:
     cols = read_fits_columns(path, list(NWAY_COLUMNS))
     frame = pd.DataFrame({NWAY_COLUMNS[k]: (_strings(v) if v.dtype.kind in "SU" else v)
                           for k, v in cols.items()})
     del cols
-    led = led or FilterLedger(len(frame))
+    led = FilterLedger(len(frame))
     log(f"[nway] {len(frame):,} rows read from {path.name}")
     frame = frame[led.apply("nway_exact_duplicates_collapsed",
                             ~frame.duplicated(keep="first").to_numpy())]
@@ -152,8 +142,8 @@ def load_desi(path: Path, main_releases: list[int], log=print) -> tuple[pd.DataF
     if frame["targetid"].duplicated().any():
         raise CrossmatchError("ZCAT_PRIMARY does not give one row per TARGETID; "
                               "the DESI catalogue is not the expected zall-pix product")
-    frame["desi_release"] = decode_release(frame["targetid"].to_numpy())
-    frame["is_main_survey"] = np.isin(frame["desi_release"].to_numpy(), main_releases)
+    frame["is_main_survey"] = np.isin(decode_release(frame["targetid"].to_numpy()),
+                                      main_releases)
     log(f"[desi] {counts['desi_rows_raw']:,} rows, {counts['desi_rows_kept']:,} primary targets "
         f"with a position; {int(frame['is_main_survey'].sum()):,} main-survey encoded")
     return frame, counts
@@ -185,18 +175,17 @@ def match(nway: pd.DataFrame, desi: pd.DataFrame, radius_arcsec: float,
 
     pref = first_per_row(np.lexsort((sep, ~is_main, i_n)))
     near = first_per_row(np.lexsort((sep, i_n)))
-    assert np.array_equal(i_n[pref], i_n[near])
     flipped = i_d[pref] != i_d[near]
     rows = nway.iloc[i_n[pref]].reset_index(drop=True)
     chosen = desi.iloc[i_d[pref]].reset_index(drop=True)
-    out = pd.concat([chosen[["targetid"]], rows, chosen.drop(columns=["targetid"])], axis=1)
+    out = pd.concat([chosen[["targetid"]], rows,
+                     chosen.drop(columns=["targetid", "is_main_survey"])], axis=1)
     out["sep_arcsec"] = sep[pref]
-    out["n_candidates"] = n_cand[i_n[pref]]
-    out["preferred_over_nearest"] = flipped
     stats = {"candidate_pairs": int(i_n.size),
              "nway_rows_matched": int(pref.size),
              "nway_rows_with_2plus_candidates": int((n_cand >= 2).sum()),
              "flipped_by_main_survey_preference": int(flipped.sum()),
+             "matched_to_main_survey": int(is_main[pref].sum()),
              "median_sep_arcsec": float(np.median(sep[pref])),
              "p99_sep_arcsec": float(np.percentile(sep[pref], 99))}
     log(f"[match] {stats['nway_rows_matched']:,} NWAY rows matched ({stats['candidate_pairs']:,} "
@@ -207,30 +196,27 @@ def match(nway: pd.DataFrame, desi: pd.DataFrame, radius_arcsec: float,
     return out, stats, matched
 
 
-def reliability_mask(frame: pd.DataFrame,
-                     uncalibrated_min: float) -> tuple[np.ndarray, np.ndarray, dict]:
+def reliability_mask(frame: pd.DataFrame, uncalibrated_min: float) -> tuple[np.ndarray, dict]:
     p_any = frame["nway_p_any"].to_numpy(np.float64)
     thr = frame["nway_threshold6"].to_numpy(np.float64)
     calibrated = np.isfinite(thr)
     keep = np.where(calibrated, p_any > thr, p_any >= uncalibrated_min)
-    branch = np.where(calibrated, "calibrated", "uncalibrated")
     stats = {"calibrated_kept": int((calibrated & keep).sum()),
              "calibrated_dropped": int((calibrated & ~keep).sum()),
              "uncalibrated_kept": int((~calibrated & keep).sum()),
              "uncalibrated_dropped": int((~calibrated & ~keep).sum()),
              "uncalibrated_p_any_min": uncalibrated_min}
-    return keep, branch, stats
+    return keep, stats
 
 
 def resolve_shared_targets(frame: pd.DataFrame, split_max_sep_arcsec: float,
                            log=print) -> tuple[np.ndarray, dict]:
     """Flag split-source groups and pick a winner in collision groups.
 
-    Adds `split_source` and `collision_group_size`; returns the keep mask and stats.
+    Adds `split_source`; returns the keep mask and stats.
     """
     n = len(frame)
     split = np.zeros(n, bool)
-    size = np.ones(n, np.int64)
     keep = np.ones(n, bool)
     xra = frame["xray_ra"].to_numpy(np.float64)
     xdec = frame["xray_dec"].to_numpy(np.float64)
@@ -245,7 +231,6 @@ def resolve_shared_targets(frame: pd.DataFrame, split_max_sep_arcsec: float,
             continue
         stats["shared_target_groups"] += 1
         stats["largest_group"] = max(stats["largest_group"], int(rows.size))
-        size[rows] = rows.size
         coords = SkyCoord(xra[rows] * u.deg, xdec[rows] * u.deg)
         pair_max = max(coords[i].separation(coords[j]).arcsec
                        for i in range(rows.size) for j in range(i + 1, rows.size))
@@ -260,7 +245,6 @@ def resolve_shared_targets(frame: pd.DataFrame, split_max_sep_arcsec: float,
             stats["collision_groups"] += 1
             stats["collision_rows_dropped"] += int(losers.size)
     frame["split_source"] = split
-    frame["collision_group_size"] = size
     log(f"[shared] {stats['shared_target_groups']:,} targets under several detections: "
         f"{stats['split_source_groups']:,} split-source groups flagged, "
         f"{stats['collision_groups']:,} collisions resolved "
@@ -290,8 +274,7 @@ def run(cfg: dict, log=print) -> pd.DataFrame:
     # `frame` is in NWAY row order restricted to matched rows, so the ledger masks below
     # index it directly
 
-    keep, branch, rel_stats = reliability_mask(frame, float(cm["uncalibrated_p_any_min"]))
-    frame["reliability_branch"] = branch
+    keep, rel_stats = reliability_mask(frame, float(cm["uncalibrated_p_any_min"]))
     frame = frame[led.apply("nway_p_any_reliability", keep)].reset_index(drop=True)
 
     keep, share_stats = resolve_shared_targets(frame, float(cm["split_source_max_sep_arcsec"]),

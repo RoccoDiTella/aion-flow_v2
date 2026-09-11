@@ -1,43 +1,29 @@
 """Step 0: download the four public catalogues with resume and checksum verification.
 
-    python -m aionflow_data.fetch_catalogs [--config CONFIG] [--dry-run] [--only NAME ...]
-    python -m aionflow_data.fetch_catalogs --clean-raw
+    python -m aionflow_data.fetch_catalogs [--config CONFIG] [--dry-run]
 
 Each input in the config is downloaded into `paths.raw` as `<file>.part` with HTTP
 Range resume, verified against the configured md5 or sha256 and, where the publisher
-ships a checksum sidecar, against that too, then renamed into place. The ledger
-`data/provenance/raw.json` records size, both digests, URL and retrieval time per
-file. A file already present with the recorded size and mtime is not re-hashed.
-
-`--clean-raw` deletes `paths.raw` only when the crossmatch and labels ledgers exist
-and record the same checksums, so the pipeline's outputs are provably derived from
-the files being removed.
+ships a checksum sidecar, against that too, then renamed into place. A file already
+present is re-hashed against the configured checksum and makes no request. The
+ledger `data/provenance/raw.json` records size, both digests, URL and retrieval
+time per file.
 """
 
 from __future__ import annotations
 
-import shutil
 import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .common import (
-    ensure_dirs,
-    file_digests,
-    load_config,
-    read_ledger,
-    step_parser,
-    utc_now,
-    write_ledger,
-)
+from .common import ensure_dirs, file_digests, load_config, step_parser, utc_now, write_ledger
 
 STEP = "raw"
 CHUNK = 1 << 20
 USER_AGENT = "aionflow-data/0.1"
 PERMANENT_HTTP = (400, 401, 403, 404, 410)
-DOWNSTREAM_LEDGERS = ("crossmatch", "labels")
 
 
 class FetchError(RuntimeError):
@@ -147,40 +133,19 @@ def status(dest: Path, expected_bytes: int) -> str:
     return "missing"
 
 
-def _ledger_matches(prior: dict | None, name: str, dest: Path) -> dict | None:
-    """The prior ledger entry for `name` if it still describes the file on disk."""
-    if not prior:
-        return None
-    rec = (prior.get("inputs") or {}).get(name)
-    if not rec:
-        return None
-    st = dest.stat()
-    if rec.get("bytes") == st.st_size and rec.get("mtime_ns") == st.st_mtime_ns \
-            and rec.get("path") == str(dest):
-        return rec
-    return None
-
-
 # ----------------------------------------------------------------------------- run
 
-def run(cfg: dict, *, only: list[str] | None = None, dry_run: bool = False,
-        retries: int = 6, backoff_s: float = 5.0, timeout_s: float = 60.0, log=print) -> dict:
+def run(cfg: dict, *, dry_run: bool = False, retries: int = 6, backoff_s: float = 5.0,
+        timeout_s: float = 60.0, log=print) -> dict:
     ensure_dirs(cfg)
     raw = Path(cfg["paths"]["raw"])
-    prior = read_ledger(STEP, cfg)
     entries: dict[str, dict] = {}
     for name, entry in cfg["inputs"].items():
-        if only and name not in only:
-            continue
         dest = raw / entry["file"]
         state = status(dest, int(entry["bytes"]))
         log(f"[fetch] {name:10s} {state:10s} {dest}")
         if dry_run:
             entries[name] = {"path": str(dest), "status": state, "url": entry["url"]}
-            continue
-        reuse = _ledger_matches(prior, name, dest) if state == "present" else None
-        if reuse:
-            entries[name] = dict(reuse, status="present")
             continue
         if state == "wrong-size":
             log(f"[fetch] {name}: size differs from the configured {entry['bytes']:,}; "
@@ -193,7 +158,7 @@ def run(cfg: dict, *, only: list[str] | None = None, dry_run: bool = False,
             state = "downloaded"
         digests = verify(dest, entry)
         published = None
-        if entry.get("checksum_sidecar_url"):
+        if state == "downloaded" and entry.get("checksum_sidecar_url"):
             want = publisher_sha256(entry["checksum_sidecar_url"], entry["file"], timeout_s)
             if want is None:
                 log(f"[fetch] {name}: publisher sidecar does not list {entry['file']}")
@@ -203,76 +168,29 @@ def run(cfg: dict, *, only: list[str] | None = None, dry_run: bool = False,
                                  f"publisher's {want}; file removed")
             else:
                 published = True
-        st = dest.stat()
         entries[name] = {
-            "path": str(dest), "bytes": st.st_size, "mtime_ns": st.st_mtime_ns,
-            "sha256": digests["sha256"], "md5": digests["md5"], "url": entry["url"],
-            "retrieved_utc": utc_now(), "status": state,
-            "publisher_sha256_verified": published,
+            "path": str(dest), "bytes": dest.stat().st_size, "sha256": digests["sha256"],
+            "md5": digests["md5"], "url": entry["url"], "retrieved_utc": utc_now(),
+            "status": state, "publisher_sha256_verified": published,
         }
-        log(f"[fetch] {name}: {state}, {st.st_size:,} bytes, sha256 {digests['sha256'][:16]}...")
+        log(f"[fetch] {name}: {state}, {entries[name]['bytes']:,} bytes, "
+            f"sha256 {digests['sha256'][:16]}...")
     if not dry_run:
-        # keep entries for inputs not selected by --only from the prior ledger
-        if only and prior:
-            for name, rec in (prior.get("inputs") or {}).items():
-                entries.setdefault(name, rec)
         write_ledger(STEP, cfg, inputs=entries, counts={"files": len(entries)})
     return entries
-
-
-def clean_raw(cfg: dict, log=print) -> int:
-    """Delete `paths.raw` once every raw input is recorded, with the same sha256, by a
-    downstream ledger. Returns the number of files removed."""
-    raw_ledger = read_ledger(STEP, cfg)
-    if raw_ledger is None:
-        raise FetchError("refusing to clean: no raw ledger")
-    downstream = {s: read_ledger(s, cfg) for s in DOWNSTREAM_LEDGERS}
-    missing = [s for s, lg in downstream.items() if lg is None]
-    if missing:
-        raise FetchError(f"refusing to clean: ledgers not found for {missing}")
-    for name, rec in raw_ledger["inputs"].items():
-        seen = False
-        for step, lg in downstream.items():
-            ref = (lg.get("inputs") or {}).get(name)
-            if ref is None:
-                continue
-            seen = True
-            if ref.get("sha256") != rec.get("sha256"):
-                raise FetchError(f"refusing to clean: {step} ledger records a different "
-                                 f"sha256 for {name}")
-        if not seen:
-            raise FetchError(f"refusing to clean: no downstream ledger references {name}")
-    raw = Path(cfg["paths"]["raw"])
-    n = 0
-    for rec in raw_ledger["inputs"].values():
-        p = Path(rec["path"])
-        if p.is_file():
-            p.unlink()
-            n += 1
-            log(f"[clean-raw] removed {p}")
-    if raw.is_dir() and not any(raw.iterdir()):
-        shutil.rmtree(raw)
-    return n
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = step_parser(__doc__.split("\n\n")[0])
     parser.add_argument("--dry-run", action="store_true", help="report state; download nothing")
-    parser.add_argument("--only", nargs="+", metavar="NAME", help="subset of inputs")
     parser.add_argument("--retries", type=int, default=6)
     parser.add_argument("--backoff", type=float, default=5.0, help="seconds, doubles per retry")
     parser.add_argument("--timeout", type=float, default=60.0, help="seconds per request")
-    parser.add_argument("--clean-raw", action="store_true",
-                        help="delete raw files whose checksums downstream ledgers record")
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
     try:
-        if args.clean_raw:
-            n = clean_raw(cfg)
-            print(f"[clean-raw] removed {n} file(s)")
-            return 0
-        run(cfg, only=args.only, dry_run=args.dry_run, retries=args.retries,
-            backoff_s=args.backoff, timeout_s=args.timeout)
+        run(cfg, dry_run=args.dry_run, retries=args.retries, backoff_s=args.backoff,
+            timeout_s=args.timeout)
     except FetchError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

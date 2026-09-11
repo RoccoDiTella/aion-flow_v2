@@ -15,9 +15,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = REPO_ROOT / "config.yaml"
 
-REQUIRED_SECTIONS = (
-    "inputs", "archives", "crossmatch", "labels", "spectra", "cutouts", "split", "stage", "paths",
-)
+REQUIRED_SECTIONS = ("inputs", "archives", "crossmatch", "labels", "spectra", "cutouts", "split",
+                     "paths")
 INPUT_NAMES = ("nway", "main", "desi_zcat", "cigale")
 PATH_KEYS = ("raw", "work", "staged", "provenance")
 
@@ -25,12 +24,9 @@ PATH_KEYS = ("raw", "work", "staged", "provenance")
 # ----------------------------------------------------------------------------- config
 
 def load_config(path: str | os.PathLike | None = None) -> dict:
-    """Read the YAML config. Relative entries under `paths` resolve against the file.
-
-    Resolution order: explicit argument, `AIONFLOW_CONFIG`, then `config.yaml` at the
-    repository root. The resolved config path is stored under `_config_path`.
-    """
-    path = Path(path or os.environ.get("AIONFLOW_CONFIG") or DEFAULT_CONFIG).resolve()
+    """Read the YAML config (the repository's by default). Relative entries under
+    `paths` resolve against the file; its resolved path is stored as `_config_path`."""
+    path = Path(path or DEFAULT_CONFIG).resolve()
     with open(path) as fh:
         cfg = yaml.safe_load(fh)
     missing = [s for s in REQUIRED_SECTIONS if s not in cfg]
@@ -53,8 +49,7 @@ def load_config(path: str | os.PathLike | None = None) -> dict:
 def step_parser(description: str) -> argparse.ArgumentParser:
     """An argument parser with the `--config` option every step takes."""
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--config", default=None,
-                        help="pipeline config (default: $AIONFLOW_CONFIG or config.yaml)")
+    parser.add_argument("--config", default=None, help="pipeline config (default: config.yaml)")
     return parser
 
 
@@ -69,14 +64,6 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def file_digest(path: str | os.PathLike, algorithm: str = "sha256", chunk: int = 1 << 20) -> str:
-    h = hashlib.new(algorithm)
-    with open(path, "rb") as fh:
-        for block in iter(lambda: fh.read(chunk), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
 def file_digests(path: str | os.PathLike, algorithms: tuple[str, ...] = ("md5", "sha256"),
                  chunk: int = 1 << 20) -> dict[str, str]:
     """Several digests of one file in a single pass."""
@@ -89,11 +76,7 @@ def file_digests(path: str | os.PathLike, algorithms: tuple[str, ...] = ("md5", 
 
 
 def sha256(path: str | os.PathLike) -> str:
-    return file_digest(path, "sha256")
-
-
-def md5(path: str | os.PathLike) -> str:
-    return file_digest(path, "md5")
+    return file_digests(path, ("sha256",))["sha256"]
 
 
 # ----------------------------------------------------------------------------- FITS
@@ -104,20 +87,6 @@ def native(a: np.ndarray) -> np.ndarray:
     if a.dtype.byteorder == ">":
         return a.astype(a.dtype.newbyteorder("="))
     return a
-
-
-def fits_nrows(path: str | os.PathLike, hdu: int = 1) -> int:
-    from astropy.io import fits
-
-    with fits.open(path, memmap=True) as handle:
-        return int(handle[hdu].header["NAXIS2"])
-
-
-def fits_column_names(path: str | os.PathLike, hdu: int = 1) -> list[str]:
-    from astropy.io import fits
-
-    with fits.open(path, memmap=True) as handle:
-        return list(handle[hdu].columns.names)
 
 
 def read_fits_columns(path: str | os.PathLike, columns: list[str] | tuple[str, ...],
@@ -175,9 +144,9 @@ def describe_file(path: str | os.PathLike, digest: str | None = None) -> dict:
 
 
 def _json_default(obj):
-    if isinstance(obj, (np.integer,)):
+    if isinstance(obj, np.integer):
         return int(obj)
-    if isinstance(obj, (np.floating,)):
+    if isinstance(obj, np.floating):
         return float(obj)
     if isinstance(obj, np.bool_):
         return bool(obj)

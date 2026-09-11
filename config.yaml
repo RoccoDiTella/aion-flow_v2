@@ -71,27 +71,15 @@ cutouts:
   pixscale: 0.262
   size: 160
   bands: griz
-  # centre: 'fiber' (DESI MEAN_FIBER_RA/DEC, where the spectrum was taken) or 'target'
-  # (the catalogue position); they differ by a fraction of a pixel
-  position: fiber
   sleep_s: 0.4
   backoff_s: 5.0
   max_backoff_s: 120.0
   timeout_s: 120.0
-  min_bytes: 10000
 
 split:
+  # a seeded random permutation of the sample, cut at the cumulative fractions
+  seed: 42
   fractions: [0.8, 0.1, 0.1]
-  tolerance: 0.01
-  hash:
-    algorithm: blake2b
-    digest_size: 8
-    salt: aion-flow-v2/2026-09-10
-
-stage:
-  chunk_target_bytes: 262144
-  spectra_compression: gzip
-  spectra_compression_level: 4
 
 paths:
   raw: data/raw

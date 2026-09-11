@@ -4,11 +4,10 @@
 
 Joins every crossmatch row to the Main catalogue on DETUID (an exact lookup; a
 miss is an error) and to the CIGALE VAC on TARGETID (a left join; a miss is a
-missing label). Per X-ray band (1 = 0.2-2.3, P1 = 0.2-0.5, P2 = 0.5-1.0,
-P3 = 1.0-2.0, P4 = 2.0-5.0 keV): log10 flux with split-normal errors in dex,
-the detection likelihood, the aperture triple (N counts, B background, t exposure)
-behind the Poisson heads, and the PSF-fit alternatives carried raw. The broad-band
-luminosity uses Planck18 at z > 0.
+missing label). Per X-ray band (1 = 0.2-2.3, P2 = 0.5-1.0, P3 = 1.0-2.0 keV):
+log10 flux with split-normal errors in dex, the detection likelihood, and the
+aperture triple (N counts, B background, t exposure) behind the Poisson heads.
+The broad-band luminosity uses Planck18 at z > 0.
 
 Counts integrity: APE_CTS is int16 in the published catalogue and wraps on the
 brightest sources; a negative value is not invertible, so the whole triple for
@@ -21,8 +20,7 @@ as the DESI observation, then a main-survey fit, then the lowest chi2. A label
 is missing where the fit failed (both values exactly zero), carries a -99
 sentinel, has a best/Bayesian PDF flag outside the configured window for that
 quantity, has a non-positive or non-finite error, or has an error above the
-configured maximum. Specific SFR is carried as a reference where both parents
-survive.
+configured maximum.
 
 Output: <work>/labels.csv, one row per crossmatch row, and the ledger
 data/provenance/labels.json with every gate's cost.
@@ -49,13 +47,18 @@ from .crossmatch import OUTPUT as CROSSMATCH_OUTPUT
 STEP = "labels"
 OUTPUT = "labels.csv"
 
-BANDS = [("1", "1"), ("P1", "p1"), ("P2", "p2"), ("P3", "p3"), ("P4", "p4")]
-APE_COLUMNS = {"APE_CTS": "ape_cts", "APE_BKG": "ape_bkg", "APE_EXP": "ape_exp",
-               "APE_RADIUS": "ape_radius", "APE_POIS": "ape_pois"}
-ML_COLUMNS = {"ML_CTS": "ml_cts", "ML_RATE": "ml_rate", "ML_EXP": "ml_exp", "ML_EEF": "ml_eef"}
-CIGALE_COLUMNS = ["SURVEY", "PROGRAM", "SPECTYPE", "CHI2", "LOGM", "LOGM_ERR", "LOGSFR",
-                  "LOGSFR_ERR", "AGNFRAC", "AGNLUM", "FLAG_MASSPDF", "FLAG_SFRPDF"]
+BANDS = [("1", "1"), ("P2", "p2"), ("P3", "p3")]          # (catalogue suffix, ours)
+CIGALE_COLUMNS = ["SURVEY", "PROGRAM", "CHI2", "LOGM", "LOGM_ERR", "LOGSFR", "LOGSFR_ERR",
+                  "FLAG_MASSPDF", "FLAG_SFRPDF"]
 SENTINEL = -90.0
+LABEL_COLUMNS = (
+    ["log_flux_1", "log_flux_1_sig_lo", "log_flux_1_sig_hi", "log_lx", "det_like_0"]
+    + [f"log_flux_{b}{s}" for _, b in BANDS[1:] for s in ("", "_sig_lo", "_sig_hi")]
+    + [f"det_like_{b}" for _, b in BANDS[1:]]
+    + [f"ape_{q}_{b}" for _, b in BANDS for q in ("cts", "bkg", "exp")]
+    + ["log_sfr", "log_sfr_sig_lo", "log_sfr_sig_hi",
+       "logmstar_cigale", "logmstar_cigale_sig_lo", "logmstar_cigale_sig_hi"]
+)
 
 
 class LabelsError(RuntimeError):
@@ -130,10 +133,10 @@ def main_row_index(main_path: Path, detuids: np.ndarray) -> np.ndarray:
 def xray_labels(main_path: Path, frame: pd.DataFrame, cfg_labels: dict,
                 log=print) -> tuple[pd.DataFrame, dict]:
     rows = main_row_index(main_path, frame["ero_detuid"].to_numpy())
-    columns = ["DET_LIKE_0"] + [f"DET_LIKE_P{b}" for b in (1, 2, 3, 4)]
+    columns = ["DET_LIKE_0"] + [f"DET_LIKE_{b}" for b, _ in BANDS[1:]]
     for fits_b, _ in BANDS:
-        columns += [f"ML_FLUX_{fits_b}", f"ML_FLUX_LOWERR_{fits_b}", f"ML_FLUX_UPERR_{fits_b}"]
-        columns += [f"{c}_{fits_b}" for c in APE_COLUMNS] + [f"{c}_{fits_b}" for c in ML_COLUMNS]
+        columns += [f"ML_FLUX_{fits_b}", f"ML_FLUX_LOWERR_{fits_b}", f"ML_FLUX_UPERR_{fits_b}",
+                    f"APE_CTS_{fits_b}", f"APE_BKG_{fits_b}", f"APE_EXP_{fits_b}"]
     data = read_fits_columns(main_path, columns, rows=rows)
     cap = float(cfg_labels["sig_cap_dex"])
     det_min = float(cfg_labels["det_like_min"])
@@ -162,11 +165,7 @@ def xray_labels(main_path: Path, frame: pd.DataFrame, cfg_labels: dict,
         out[f"ape_cts_{ours}"] = cts_out
         out[f"ape_bkg_{ours}"] = bkg
         out[f"ape_exp_{ours}"] = exp
-        out[f"ape_radius_{ours}"] = data[f"APE_RADIUS_{fits_b}"].astype(np.float64)
-        out[f"ape_pois_{ours}"] = data[f"APE_POIS_{fits_b}"].astype(np.float64)
         out[f"ape_bkg_negative_{ours}"] = negative_bkg
-        for src, dst in ML_COLUMNS.items():
-            out[f"{dst}_{ours}"] = data[f"{src}_{fits_b}"].astype(np.float64)
         det = out["det_like_0"] if ours == "1" else out[f"det_like_{ours}"]
         stats[ours] = {
             "flux_measured": int(np.isfinite(lf).sum()),
@@ -180,10 +179,6 @@ def xray_labels(main_path: Path, frame: pd.DataFrame, cfg_labels: dict,
         log(f"[xray] band {ours:>2}: {stats[ours]['flux_measured']:,} fluxes measured, "
             f"{stats[ours]['ape_cts_wrapped']} wrapped counts, "
             f"{stats[ours]['ape_bkg_negative_clipped']} negative backgrounds clipped")
-    # the trainer's names for the broad band
-    out["log_ml_flux_1"] = out["log_flux_1"]
-    out["flux_sig_lo"] = out["log_flux_1_sig_lo"]
-    out["flux_sig_hi"] = out["log_flux_1_sig_hi"]
     out["log_lx"], n_bad_z = log_luminosity(out["log_flux_1"], frame["z"].to_numpy(),
                                             cfg_labels.get("cosmology", "Planck18"))
     stats["log_lx"] = {"finite": int(np.isfinite(out["log_lx"]).sum()), "z_le_0": n_bad_z}
@@ -237,7 +232,7 @@ def cigale_labels(cigale_path: Path, frame: pd.DataFrame, cfg_labels: dict,
 
     out = pd.DataFrame({"targetid": cat["TARGETID"].to_numpy(np.int64)})
 
-    def add(name: str, value, err, bad) -> np.ndarray:
+    def add(name: str, value, err, bad) -> None:
         unusable = bad | ~np.isfinite(value) | ~np.isfinite(err) | (err <= 0)
         wide = np.isfinite(err) & (err > max_sigma) & ~unusable
         gated = unusable | wide
@@ -246,21 +241,9 @@ def cigale_labels(cigale_path: Path, frame: pd.DataFrame, cfg_labels: dict,
         out[f"{name}_sig_hi"] = np.where(gated, np.nan, err)
         stats[name] = {"usable": int((~gated).sum()), "unusable": int(unusable.sum()),
                        "removed_by_max_sigma": int(wide.sum())}
-        return gated
 
-    mass_gated = add("logmstar_cigale", logm, e_m, failed | sentinel | broad_m)
-    sfr_gated = add("log_sfr", sfr, e_s, failed | sentinel | broad_s)
-    ssfr_gated = mass_gated | sfr_gated | ~np.isfinite(sfr - logm)
-    out["ref_log_ssfr"] = np.where(ssfr_gated, np.nan, sfr - logm)
-    out["ref_log_ssfr_sig_indep"] = np.where(ssfr_gated, np.nan, np.sqrt(e_s ** 2 + e_m ** 2))
-    stats["ref_log_ssfr"] = {"usable": int((~ssfr_gated).sum())}
-    for dst, src in (("cigale_agnfrac", "AGNFRAC"), ("cigale_agnlum", "AGNLUM"),
-                     ("cigale_chi2", "CHI2"), ("cigale_flag_masspdf", "FLAG_MASSPDF"),
-                     ("cigale_flag_sfrpdf", "FLAG_SFRPDF")):
-        out[dst] = cat[src].to_numpy(np.float64)
-    for dst, src in (("cigale_spectype", "SPECTYPE"), ("cigale_survey", "SURVEY"),
-                     ("cigale_program", "PROGRAM")):
-        out[dst] = cat[src].to_numpy()
+    add("logmstar_cigale", logm, e_m, failed | sentinel | broad_m)
+    add("log_sfr", sfr, e_s, failed | sentinel | broad_s)
 
     aligned = out.set_index("targetid").reindex(targetids).reset_index(drop=True)
     for name in ("logmstar_cigale", "log_sfr"):
@@ -290,12 +273,10 @@ def run(cfg: dict, log=print) -> pd.DataFrame:
 
     out = work / OUTPUT
     labels.to_csv(out, index=False)
-    counts = {"rows_out": int(len(labels)),
-              "log_ml_flux_1_finite": int(np.isfinite(labels["log_ml_flux_1"]).sum()),
-              "log_lx_finite": int(np.isfinite(labels["log_lx"]).sum()),
-              "log_sfr_finite": int(np.isfinite(labels["log_sfr"]).sum()),
-              "logmstar_cigale_finite": int(np.isfinite(labels["logmstar_cigale"]).sum()),
-              "ref_log_ssfr_finite": int(np.isfinite(labels["ref_log_ssfr"]).sum())}
+    counts = {"rows_out": int(len(labels))}
+    for name in ("log_flux_1", "log_lx", "log_flux_p2", "log_flux_p3", "log_sfr",
+                 "logmstar_cigale"):
+        counts[f"{name}_finite"] = int(np.isfinite(labels[name]).sum())
     for _, ours in BANDS:
         counts[f"ape_triple_{ours}_complete"] = xray_stats[ours]["ape_triple_complete"]
     write_ledger(STEP, cfg,

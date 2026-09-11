@@ -4,18 +4,17 @@
 
 For every sample row with a positive redshift, each of [O III] 5007, [Ne V] 3426,
 H-alpha and H-beta whose rest-frame window falls inside the spectrograph
-coverage at that redshift is fitted with `linefit.fit_one`. The integrated flux
-is reported in the observed frame (rest-frame flux times 1 + z), the convention
-of the FastSpecFit catalogue the baseline was first built on. A line outside
-the coverage, or a failed fit, is written as 0 with its status recorded: a line
-baseline genuinely has nothing to say about such a source, and writing NaN
-would silently drop it from the comparison. Every sample row gets a row so the
-baseline is scored on the same objects as the model.
+coverage at that redshift is fitted with `linefit.fit_one`: a Gaussian
+decomposition over a local linear continuum, reporting the primary line's
+integrated flux. A line outside the coverage, or a failed fit, is written as 0
+with its status recorded: a line baseline has nothing to say about such a
+source, and writing NaN would silently drop it from the comparison. Every
+sample row gets a row, so the baseline is scored on the same objects as the
+model.
 
 Outputs: <work>/line_features.csv (one row per sample target) and
 <work>/line_fits.csv (one row per fitted line, every parameter); the ledger
-data/provenance/line_features.json records coverage, status counts and the
-Balmer decrement by class as the extraction check.
+data/provenance/line_features.json records coverage and status counts.
 """
 
 from __future__ import annotations
@@ -41,8 +40,6 @@ FITS = "line_fits.csv"
 # fitter complex -> feature column stem, in the baseline's order
 LINES = [("oiii", "oiii_5007"), ("nev", "nev_3426"), ("halpha", "halpha"), ("hbeta", "hbeta")]
 BLOCK = 512
-AN_MIN_FOR_BALMER = 5.0
-CASE_B_DECREMENT = 2.86
 
 
 class LineFeaturesError(RuntimeError):
@@ -50,8 +47,8 @@ class LineFeaturesError(RuntimeError):
 
 
 def _fit_task(args):
-    name, lam_rest, flux, ivar = args
-    return fit_one(name, lam_rest, flux, ivar)
+    name, lam_rest, flux, ivar, z = args
+    return fit_one(name, lam_rest, flux, ivar, z)
 
 
 def fit_sample(sample: pd.DataFrame, source_path: Path, grid_lo: float, grid_hi: float, *,
@@ -92,7 +89,7 @@ def fit_sample(sample: pd.DataFrame, source_path: Path, grid_lo: float, grid_hi:
                         a = max(int(np.searchsorted(lam_rest, lo_w)) - 2, 0)
                         b = min(int(np.searchsorted(lam_rest, hi_w)) + 2, lam_rest.size)
                         tasks.append((name, lam_rest[a:b].copy(), flux[k, a:b].astype(float),
-                                      ivar[k, a:b].astype(float)))
+                                      ivar[k, a:b].astype(float), zz))
                         meta.append({"targetid": int(row["targetid"]), "z": zz})
                 fits = pool.map(_fit_task, tasks, chunksize=8) if pool else \
                     [_fit_task(t) for t in tasks]
@@ -105,11 +102,7 @@ def fit_sample(sample: pd.DataFrame, source_path: Path, grid_lo: float, grid_hi:
         if pool:
             pool.close()
             pool.join()
-    fits = pd.DataFrame(results)
-    if len(fits):
-        fits["flux"] = fits["flux_rest"] * (1.0 + fits["z"])
-        fits["flux_err"] = fits["flux_rest_err"] * (1.0 + fits["z"])
-    return fits
+    return pd.DataFrame(results)
 
 
 def features_from_fits(sample: pd.DataFrame, fits: pd.DataFrame, grid_lo: float,
@@ -137,21 +130,6 @@ def features_from_fits(sample: pd.DataFrame, fits: pd.DataFrame, grid_lo: float,
     return base
 
 
-def balmer_decrement(features: pd.DataFrame) -> dict:
-    """Median H-alpha / H-beta by class where both lines are confidently measured."""
-    m = ((features["halpha_status"] == "ok") & (features["hbeta_status"] == "ok")
-         & (features["halpha_an"] > AN_MIN_FOR_BALMER)
-         & (features["hbeta_an"] > AN_MIN_FOR_BALMER) & (features["hbeta_flux"] > 0))
-    out = {"case_b": CASE_B_DECREMENT, "an_min": AN_MIN_FOR_BALMER, "by_class": {}}
-    for cls, grp in features[m].groupby("spectype"):
-        ratio = (grp["halpha_flux"] / grp["hbeta_flux"]).to_numpy()
-        if ratio.size:
-            q = np.percentile(ratio, [16, 50, 84])
-            out["by_class"][str(cls)] = {"n": int(ratio.size), "p16": float(q[0]),
-                                         "median": float(q[1]), "p84": float(q[2])}
-    return out
-
-
 def run(cfg: dict, *, nproc: int | None = None, limit: int | None = None,
         log=print) -> pd.DataFrame:
     ensure_dirs(cfg)
@@ -167,14 +145,16 @@ def run(cfg: dict, *, nproc: int | None = None, limit: int | None = None,
     sample = manifest[manifest["in_sample"].astype(bool)].reset_index(drop=True)
     if limit:
         sample = sample.head(limit)
+    with h5py.File(source_path, "r") as h:
+        row_of = pd.Series(np.arange(h["targetid"].shape[0]),
+                           index=h["targetid"][:].astype(np.int64))
+    sample = sample.assign(source_row=row_of.reindex(sample["targetid"]).to_numpy())
+    if sample["source_row"].isna().any():
+        raise LineFeaturesError("a sample target has no spectrum in spectra/source.h5")
     log(f"[lines] {len(sample):,} sample rows; coverage {grid_lo:.1f}-{grid_hi:.2f} A")
     nproc = nproc or max(1, (os.cpu_count() or 2) - 1)
     fits = fit_sample(sample, source_path, grid_lo, grid_hi, nproc=nproc, log=log)
     features = features_from_fits(sample, fits, grid_lo, grid_hi)
-    balmer = balmer_decrement(features)
-    for cls, rec in balmer["by_class"].items():
-        log(f"[lines] Balmer decrement {cls:7s} n={rec['n']:,} Ha/Hb = {rec['median']:.2f} "
-            f"[{rec['p16']:.2f}, {rec['p84']:.2f}] (case B {CASE_B_DECREMENT})")
 
     features_path, fits_path = work / FEATURES, work / FITS
     features.to_csv(features_path, index=False)
@@ -196,9 +176,8 @@ def run(cfg: dict, *, nproc: int | None = None, limit: int | None = None,
                  extra={"lines": {name: {"stem": stem, "window": list(COMPLEXES[name]["window"]),
                                          "primary": list(COMPLEXES[name]["primary"])}
                                   for name, stem in LINES},
-                        "coverage_angstrom": [grid_lo, grid_hi], "flux_frame": "observed",
-                        "status_counts": status_counts, "balmer_decrement": balmer,
-                        "nproc": nproc, "limit": limit,
+                        "coverage_angstrom": [grid_lo, grid_hi],
+                        "status_counts": status_counts, "nproc": nproc, "limit": limit,
                         "outputs": {"features": describe_file(features_path),
                                     "fits": describe_file(fits_path)}})
     return features

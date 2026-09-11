@@ -90,47 +90,44 @@ def test_positional_match_and_main_survey_preference(run, planted):
     S = planted["scenarios"]
     r = _row(frame, S["tie_two_main"]["detuid"])
     assert r["targetid"] == S["tie_two_main"]["chosen_targetid"]
-    assert r["n_candidates"] == 2 and not r["preferred_over_nearest"] and r["is_main_survey"]
     assert S["tie_two_main"]["other_targetid"] not in set(frame["targetid"])
     r = _row(frame, S["tie_main_vs_backup"]["detuid"])
     assert r["targetid"] == S["tie_main_vs_backup"]["chosen_targetid"]
-    assert r["preferred_over_nearest"] and r["is_main_survey"] and r["desi_release"] == 9010
+    assert S["tie_main_vs_backup"]["nearest_targetid"] not in set(frame["targetid"])
     r = _row(frame, S["backup_only"]["detuid"])
     assert r["targetid"] == S["backup_only"]["targetid"]
-    assert not r["is_main_survey"] and r["desi_release"] == 0 and r["n_candidates"] == 1
     m = ledger["extra"]["match"]
     assert m["flipped_by_main_survey_preference"] == planted["expected"]["n_flipped_by_preference"]
     assert m["nway_rows_with_2plus_candidates"] == 2
+    assert m["matched_to_main_survey"] == m["nway_rows_matched"] - 1    # the backup-only target
     assert (frame["sep_arcsec"] <= 1.0).all()
     clean = frame[frame["ero_detuid"].isin(S["clean"]["detuids"])]
-    assert (clean["sep_arcsec"] < 0.1).all() and (clean["n_candidates"] == 1).all()
+    assert (clean["sep_arcsec"] < 0.1).all()
 
 
 def test_reliability_cut(run, planted):
     _, frame, ledger = run
     S = planted["scenarios"]
     r = _row(frame, S["uncalibrated_keep"]["detuid"])
-    assert r["reliability_branch"] == "uncalibrated" and np.isnan(r["nway_threshold6"])
+    assert np.isnan(r["nway_threshold6"]) and r["nway_p_any"] >= 0.05
     assert S["uncalibrated_drop"]["detuid"] not in set(frame["ero_detuid"])
     assert S["below_threshold6"]["detuid"] not in set(frame["ero_detuid"])
     rel = ledger["extra"]["reliability"]
     assert rel["uncalibrated_kept"] == 1 and rel["uncalibrated_dropped"] == 1
     assert rel["calibrated_dropped"] == 1
-    assert (frame.loc[frame["reliability_branch"] == "calibrated", "nway_p_any"]
-            > frame.loc[frame["reliability_branch"] == "calibrated", "nway_threshold6"]).all()
+    calibrated = frame[np.isfinite(frame["nway_threshold6"])]
+    assert (calibrated["nway_p_any"] > calibrated["nway_threshold6"]).all()
 
 
 def test_shared_targets(run, planted):
     _, frame, ledger = run
     S = planted["scenarios"]
     r = _row(frame, S["collision"]["kept_detuid"])
-    assert r["targetid"] == S["collision"]["targetid"] and r["collision_group_size"] == 2
-    assert not r["split_source"]
+    assert r["targetid"] == S["collision"]["targetid"] and not r["split_source"]
     assert S["collision"]["dropped_detuid"] not in set(frame["ero_detuid"])
     pair = frame[frame["ero_detuid"].isin(S["split_source"]["detuids"])]
     assert len(pair) == 2 and pair["split_source"].all()
     assert (pair["targetid"] == S["split_source"]["targetid"]).all()
-    assert (pair["collision_group_size"] == 2).all()
     assert sorted(pair["ero_detuid"]) == sorted(planted["expected"]["split_source_detuids"])
     sh = ledger["extra"]["shared_targets"]
     assert sh == {"shared_target_groups": 2, "split_source_groups": 1, "split_source_rows": 2,
@@ -151,15 +148,9 @@ def test_carried_columns_and_types(run, planted):
     r = frame[frame["targetid"] == S["z_nonpositive"]["targetid"]].iloc[0]
     assert r["z"] < 0 and r["spectype"] == "STAR"
     assert frame["targetid"].dtype == np.int64
-    # the fibre position is carried next to the target position and sits within 1"
-    cosdec = np.cos(np.radians(frame["target_dec"]))
-    sep = np.hypot((frame["fiber_ra"] - frame["target_ra"]) * cosdec,
-                   frame["fiber_dec"] - frame["target_dec"]) * 3600
-    assert (sep < 1.0).all() and (sep == 0).any() and (sep > 0).any()
     assert frame["survey"].isin(["main"]).all()
     assert set(frame["program"]) <= {"dark", "bright", "backup"}
-    assert frame["ls10_type"].str.len().between(3, 3).all()
-    assert frame["simbad_known_galactic"].dtype == bool
+    assert frame["split_source"].dtype == bool
 
 
 def test_ledger_inputs_and_determinism(run):
@@ -173,7 +164,7 @@ def test_ledger_inputs_and_determinism(run):
     pd.testing.assert_frame_equal(again, pd.read_parquet(out))
 
 
-def test_gzipped_nway_input_is_inflated_once(tmp_path, planted):
+def test_gzipped_nway_is_inflated_once(tmp_path):
     cfg = make_fx_cfg(tmp_path)
     raw = tmp_path / "raw"
     raw.mkdir()
@@ -188,15 +179,17 @@ def test_gzipped_nway_input_is_inflated_once(tmp_path, planted):
         yaml.safe_dump(text, fh)
     cfg = common.load_config(cfg["_config_path"])
     frame = crossmatch.run(cfg, **QUIET)
-    assert len(frame) == planted["expected"]["crossmatch_rows"]
     inflated = tmp_path / "work" / "nway.fits"
-    assert inflated.is_file() and common.sha256(inflated) == common.sha256(FIXTURES / "nway.fits")
+    assert inflated.is_file() and len(frame) > 0
     ledger = common.read_ledger("crossmatch", cfg)
-    assert ledger["extra"]["nway_inflated"]["sha256"] == common.sha256(inflated)
+    assert ledger["extra"]["nway_inflated"]["sha256"] == common.sha256(FIXTURES / "nway.fits")
     assert ledger["inputs"]["nway"]["path"].endswith("nway.fits.gz")
+    mtime = inflated.stat().st_mtime_ns
+    crossmatch.run(cfg, **QUIET)
+    assert inflated.stat().st_mtime_ns == mtime
 
 
-def test_missing_input_is_reported(tmp_path):
+def test_missing_input_and_cli(tmp_path):
     cfg = make_fx_cfg(tmp_path)
     text = yaml.safe_load(open(cfg["_config_path"]))
     text["paths"]["raw"] = str(tmp_path / "nowhere")

@@ -12,7 +12,7 @@ wrote, and every row it cut.
 
 | output | contents |
 |---|---|
-| `data/staged/desi_{train,val,test}.hdf5` | inputs only: DESI spectra and inverse variance on the 7,781-bin grid, redshift, WISE W1-W3 fluxes, Legacy Survey griz cutouts, and the four presence flags |
+| `data/staged/{train,val,test}.h5` | inputs only: DESI spectra and inverse variance on the 7,781-bin grid, redshift, WISE W1-W3 fluxes, Legacy Survey griz cutouts, and the redshift and WISE presence flags |
 | `data/work/labels.csv` | one row per source: eROSITA band fluxes with split-normal errors, luminosity, detection likelihoods, aperture photon counts, CIGALE stellar mass and star formation rate |
 | `data/work/split.csv` | `targetid, split` |
 | `data/work/line_features.csv` | [O III] 5007, [Ne V] 3426, H-alpha and H-beta fluxes fitted on our own spectra, for the classical baseline |
@@ -30,7 +30,7 @@ Column definitions, selection rules and the counts of the canonical run are in
 | DESI redshift catalogue | DR1 (iron), `zall-pix-iron` | 21.3 GB |
 | DESI CIGALE physical properties VAC | DR1, `IronPhysProp_v1.2` | 7.32 GB |
 | DESI healpix coadd spectra | DR1 (iron) | ~13 GB read by HTTP range, only our rows |
-| Legacy Survey DR10 cutouts | `ls-dr10`, 160 px at 0.262"/px, griz, centred on the DESI fibre position | ~55 GB, one file per target |
+| Legacy Survey DR10 cutouts | `ls-dr10`, 160 px at 0.262"/px, griz | ~55 GB, one file per target |
 
 URLs, sizes and checksums are pinned in `config.yaml`; the fetch step verifies
 them and, where the publisher ships one, the publisher's checksum sidecar.
@@ -48,14 +48,13 @@ make help
 The steps, in order: `fetch`, `crossmatch`, `labels`, `spectra`, `cutouts`,
 `manifest_split`, `stage`, `validate`, `line_features`. Each is idempotent:
 the fetchers resume from what is on disk, the others recompute from their
-inputs. `make clean-raw` deletes the raw catalogues once the crossmatch and
-labels ledgers record their checksums.
+inputs.
 
 | step | where it runs | wall time | disk |
 |---|---|---|---|
 | fetch | anywhere with 35 GB free | 1 to 3 h | 32 GB |
 | crossmatch | a machine that can hold two 200 MB columns | minutes | 50 MB |
-| labels | same | minutes | 200 MB |
+| labels | same | minutes | 100 MB |
 | spectra | outbound HTTP; 6 workers | about half a day | ~9 GB |
 | cutouts | outbound HTTP; sequential, rate limited by the service | about eight days | ~55 GB |
 | manifest_split, stage, validate | same | about an hour | ~55 GB |
@@ -74,10 +73,9 @@ reliability cut is NWAY's own per-tile threshold, `p_any > threshold6`, with a
 flat `p_any >= 0.05` where the calibration is absent. A target adopted by two
 detections is a split source when the X-ray positions lie within 15
 arcseconds (both rows excluded) and a collision otherwise (the higher
-`dist_post` wins). The sample is what remains with a spectrum. The split
-groups on connected components of the detection-target graph and assigns each
-component by a keyed blake2b hash of its smallest DETUID; there is no seed.
-Detection likelihood, redshift quality, WISE and image availability are
+`dist_post` wins). The sample is what remains with a spectrum and a cutout.
+The split is a seeded random permutation of the sample (seed 42) cut at
+80/10/10. Detection likelihood, redshift quality and WISE availability are
 carried as label gates and presence flags, never as sample cuts.
 
 ## Layout
@@ -94,7 +92,7 @@ data/provenance/       committed ledgers of the canonical run
 
 ## Tests
 
-`make test` runs about 120 tests in half a minute on the committed fixtures.
+`make test` runs about 110 tests in half a minute on the committed fixtures.
 `tests/fixtures/make_fixtures.py` generates them deterministically and records
 in `planted.json` what each step must produce, so the tests assert against
 construction rather than against a previous run. The last test runs `make all`

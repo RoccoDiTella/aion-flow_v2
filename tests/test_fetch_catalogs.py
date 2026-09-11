@@ -99,7 +99,7 @@ def test_partial_file_resumes_with_a_range_request(tmp_path, remote):
         half = len(data) // 2
         dest.with_name(fname + ".part").write_bytes(data[:half])
         assert fetch_catalogs.status(dest, len(data)) == "partial"
-        entries = fetch_catalogs.run(cfg, only=["nway"], **FAST)
+        entries = fetch_catalogs.run(cfg, **FAST)
     ranged = [r for r in server.requests if r[1].endswith(fname)]
     assert ranged == [("GET", f"/{fname}", f"bytes={half}-")]
     assert dest.read_bytes() == data
@@ -115,7 +115,7 @@ def test_server_without_range_support_restarts_the_file(tmp_path, remote):
         dest = raw_path(cfg, "main")
         dest.parent.mkdir(parents=True)
         dest.with_name(fname + ".part").write_bytes(b"garbage" * 100)
-        fetch_catalogs.run(cfg, only=["main"], **FAST)
+        fetch_catalogs.run(cfg, **FAST)
     assert dest.read_bytes() == data
 
 
@@ -124,7 +124,7 @@ def test_wrong_checksum_raises_and_removes_the_file(tmp_path, remote):
     with serve(served) as (_, url):
         cfg = make_cfg(tmp_path, url, blobs, nway={"md5": "0" * 32})
         with pytest.raises(fetch_catalogs.FetchError, match="md5"):
-            fetch_catalogs.run(cfg, only=["nway"], **FAST)
+            fetch_catalogs.run(cfg, **FAST)
     assert not raw_path(cfg, "nway").exists()
     assert common.read_ledger("raw", cfg) is None
 
@@ -134,7 +134,7 @@ def test_wrong_size_in_config_is_reported(tmp_path, remote):
     with serve(served) as (_, url):
         cfg = make_cfg(tmp_path, url, blobs, main={"bytes": 10})
         with pytest.raises(fetch_catalogs.FetchError, match="more than the configured 10"):
-            fetch_catalogs.run(cfg, only=["main"], **FAST)
+            fetch_catalogs.run(cfg, **FAST)
     assert not raw_path(cfg, "main").exists()
     assert not raw_path(cfg, "main").with_name("main.bin.part").exists()
 
@@ -145,7 +145,7 @@ def test_publisher_sidecar_mismatch_raises(tmp_path, remote):
     with serve(served) as (_, url):
         cfg = make_cfg(tmp_path, url, blobs)
         with pytest.raises(fetch_catalogs.FetchError, match="publisher"):
-            fetch_catalogs.run(cfg, only=["cigale"], **FAST)
+            fetch_catalogs.run(cfg, **FAST)
     assert not raw_path(cfg, "cigale").exists()
 
 
@@ -153,9 +153,9 @@ def test_transient_errors_are_retried(tmp_path, remote):
     served, blobs = remote
     with serve(served, fail_queue=[503, 429]) as (server, url):
         cfg = make_cfg(tmp_path, url, blobs)
-        entries = fetch_catalogs.run(cfg, only=["main"], **FAST)
-    assert entries["main"]["status"] == "downloaded"
-    assert len([r for r in server.requests if r[1].endswith("main.bin")]) == 3
+        entries = fetch_catalogs.run(cfg, **FAST)
+    assert entries["nway"]["status"] == "downloaded"          # the first file hit both failures
+    assert len([r for r in server.requests if r[1].endswith("nway.bin")]) == 3
 
 
 def test_permanent_404_fails_without_retrying(tmp_path, remote):
@@ -164,8 +164,8 @@ def test_permanent_404_fails_without_retrying(tmp_path, remote):
     with serve(served) as (server, url):
         cfg = make_cfg(tmp_path, url, blobs)
         with pytest.raises(fetch_catalogs.FetchError, match="404"):
-            fetch_catalogs.run(cfg, only=["main"], **FAST)
-    assert len(server.requests) == 1
+            fetch_catalogs.run(cfg, **FAST)
+    assert len([r for r in server.requests if r[1].endswith("main.bin")]) == 1
 
 
 def test_dry_run_downloads_nothing(tmp_path, remote):
@@ -179,49 +179,9 @@ def test_dry_run_downloads_nothing(tmp_path, remote):
     assert not any(Path(cfg["paths"]["raw"]).glob("*"))
 
 
-def test_only_keeps_prior_entries_for_the_rest(tmp_path, remote):
-    served, blobs = remote
-    with serve(served) as (_, url):
-        cfg = make_cfg(tmp_path, url, blobs)
-        fetch_catalogs.run(cfg, only=["nway", "main"], **FAST)
-        fetch_catalogs.run(cfg, only=["cigale"], **FAST)
-    ledger = common.read_ledger("raw", cfg)
-    assert set(ledger["inputs"]) == {"nway", "main", "cigale"}
-
-
 def test_cli_runs(tmp_path, remote):
     served, blobs = remote
     with serve(served) as (_, url):
         cfg = make_cfg(tmp_path, url, blobs)
-        rc = fetch_catalogs.main(["--config", cfg["_config_path"], "--backoff", "0.01",
-                                  "--only", "nway"])
+        rc = fetch_catalogs.main(["--config", cfg["_config_path"], "--backoff", "0.01"])
     assert rc == 0 and raw_path(cfg, "nway").is_file()
-
-
-# ----------------------------------------------------------------------------- clean-raw
-
-def _downstream(cfg, step, names, tweak=None):
-    raw = common.read_ledger("raw", cfg)
-    inputs = {n: dict(raw["inputs"][n]) for n in names}
-    if tweak:
-        inputs[tweak]["sha256"] = "f" * 64
-    common.write_ledger(step, cfg, inputs=inputs, counts={})
-
-
-def test_clean_raw_refuses_until_downstream_ledgers_match(tmp_path, remote):
-    served, blobs = remote
-    with serve(served) as (_, url):
-        cfg = make_cfg(tmp_path, url, blobs)
-        fetch_catalogs.run(cfg, **FAST)
-    with pytest.raises(fetch_catalogs.FetchError, match="ledgers not found"):
-        fetch_catalogs.clean_raw(cfg, log=lambda *a: None)
-    _downstream(cfg, "crossmatch", ["nway", "desi_zcat"])
-    _downstream(cfg, "labels", ["main"])
-    with pytest.raises(fetch_catalogs.FetchError, match="references cigale"):
-        fetch_catalogs.clean_raw(cfg, log=lambda *a: None)
-    _downstream(cfg, "labels", ["main", "cigale"], tweak="cigale")
-    with pytest.raises(fetch_catalogs.FetchError, match="different sha256"):
-        fetch_catalogs.clean_raw(cfg, log=lambda *a: None)
-    _downstream(cfg, "labels", ["main", "cigale"])
-    assert fetch_catalogs.clean_raw(cfg, log=lambda *a: None) == 4
-    assert not Path(cfg["paths"]["raw"]).exists()

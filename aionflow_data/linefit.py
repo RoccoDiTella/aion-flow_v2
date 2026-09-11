@@ -5,8 +5,10 @@ linear continuum plus one kinematic component: every line in the complex shares
 one velocity and one velocity width, and lines of one species have fixed
 relative amplitudes (the [O III] doublet at 0.335, [N II] at 1:2.96 next to
 H-alpha, with a free [N II] amplitude). The integrated flux of the primary line
-follows from the fitted amplitude and width, F = A * sigma_lambda * sqrt(2 pi),
-which convolution preserves, so no instrumental deconvolution is needed.
+is F = integral f_lambda dlambda_obs = (1 + z) A sigma_rest sqrt(2 pi): the fit
+runs on rest wavelengths while the flux density stays per observed Angstrom,
+hence the (1 + z). Convolution preserves the integral, so no instrumental
+deconvolution is needed.
 """
 
 from __future__ import annotations
@@ -68,13 +70,14 @@ def _resid(p, x, y, w, model):
     return (model(p, x) - y) * w
 
 
-def fit_one(name: str, lam_rest: np.ndarray, flux: np.ndarray, ivar: np.ndarray) -> dict:
-    """Fit one complex on a rest-frame spectrum. Returns a dict with `status`.
+def fit_one(name: str, lam_rest: np.ndarray, flux: np.ndarray, ivar: np.ndarray,
+            z: float = 0.0) -> dict:
+    """Fit one complex on a rest-frame spectrum of a source at redshift z.
 
-    On status "ok": continuum (c0, slope), v_kms, sigma_kms, amp (primary species
-    amplitude), an (amp / median noise), flux_rest and flux_rest_err (the primary
-    line integrated over rest wavelength, in flux-density units times Angstrom),
-    chi2, rchi2, n.
+    Returns a dict with `status`; on "ok" also the continuum (c0, slope), v_kms,
+    sigma_kms, amp (primary species amplitude), an (amp / median noise), flux and
+    flux_err (the primary line's integrated flux in flux-density units times
+    observed Angstrom), chi2, rchi2, n.
     """
     cx = COMPLEXES[name]
     model, n_species = make_model(cx)
@@ -128,19 +131,19 @@ def fit_one(name: str, lam_rest: np.ndarray, flux: np.ndarray, ivar: np.ndarray)
     amp, v, s = float(p[i_amp]), float(p[2]), float(p[3])
     centre = cx["primary"][1] * (1.0 + v / C_KMS)
     sigma_lambda = centre * s / C_KMS
-    flux_rest = amp * sigma_lambda * SQRT2PI
+    line_flux = (1.0 + z) * amp * sigma_lambda * SQRT2PI
     err = np.nan
     try:
         cov = np.linalg.inv(best.jac.T @ best.jac)
         var_a, var_s = float(cov[i_amp, i_amp]), float(cov[3, 3])
         if amp > 0 and s > 0 and var_a >= 0 and var_s >= 0:
-            err = flux_rest * float(np.sqrt(var_a / amp ** 2 + var_s / s ** 2))
+            err = line_flux * float(np.sqrt(var_a / amp ** 2 + var_s / s ** 2))
     except np.linalg.LinAlgError:
         pass
     n_par = 4 + n_species
     chi2 = 2.0 * float(best.cost)
     out.update(status="ok", n=n, noise=noise, c0=float(p[0]), slope=float(p[1]),
-               v_kms=v, sigma_kms=s, amp=amp, an=amp / noise, flux_rest=flux_rest,
-               flux_rest_err=err, chi2=chi2, rchi2=chi2 / max(n - n_par, 1),
+               v_kms=v, sigma_kms=s, amp=amp, an=amp / noise, flux=line_flux, flux_err=err,
+               chi2=chi2, rchi2=chi2 / max(n - n_par, 1),
                at_bound=int(abs(v) > vmax - 10 or s > smax - 10))
     return out

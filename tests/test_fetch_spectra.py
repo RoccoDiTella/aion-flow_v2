@@ -121,8 +121,8 @@ def test_source_file_contract(run, planted):
     grid = fetch_spectra.Grid.from_config(cfg)
     with_spectra = {t for ids in planted["coadd_groups"].values() for t in ids}
     with _source(cfg) as h:
-        assert set(h.keys()) == {"desi_targetid", "spectra", "spectra_ivar", "spectra_lambda"}
-        tid = h["desi_targetid"][:]
+        assert set(h.keys()) == {"targetid", "spectra", "spectra_ivar", "spectra_lambda"}
+        tid = h["targetid"][:]
         assert set(tid.tolist()) == with_spectra and np.unique(tid).size == tid.size
         assert h["spectra"].shape == (len(with_spectra), grid.nbin)
         assert h["spectra"].dtype == np.float32 and h["spectra_ivar"].dtype == np.float32
@@ -209,7 +209,7 @@ def test_merge_keeps_the_copy_with_more_good_pixels(tmp_path):
     stats = fetch_spectra.merge(shard_dir, out, grid, **QUIET)
     assert stats == {"shards": 3, "rows": 3, "unique_targets": 2, "duplicates_dropped": 1}
     with h5py.File(out) as h:
-        tid = h["desi_targetid"][:]
+        tid = h["targetid"][:]
         row7 = int(np.flatnonzero(tid == 7)[0])
         assert h["spectra"][row7, 0] == 5.0 and h["spectra_ivar"][row7, 0] == 1.0
         assert h["spectra"].shape == (2, 50)

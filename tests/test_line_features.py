@@ -45,8 +45,11 @@ def test_fit_one_recovers_a_planted_line(name):
     assert abs(fit["v_kms"]) < 10
     lam0 = linefit.COMPLEXES[name]["primary"][1]
     expected = amp * (lam0 * sigma_v / C) * np.sqrt(2 * np.pi)
-    assert fit["flux_rest"] == pytest.approx(expected, rel=0.02)
-    assert 0 < fit["flux_rest_err"] < 0.05 * fit["flux_rest"]
+    assert fit["flux"] == pytest.approx(expected, rel=0.02)
+    assert 0 < fit["flux_err"] < 0.05 * fit["flux"]
+    # at redshift z the same rest-frame fit integrates over (1 + z) times the wavelength
+    shifted = linefit.fit_one(name, lam, flux, ivar, z=0.5)
+    assert shifted["flux"] == pytest.approx(1.5 * fit["flux"], rel=1e-9)
     assert fit["an"] == pytest.approx(amp / 0.05, rel=0.1)
     assert fit["c0"] == pytest.approx(3.0, abs=0.05) and not fit["at_bound"]
 
@@ -135,18 +138,17 @@ def test_lineless_spectra_measure_nothing_significant(run, planted):
         assert (ok[f"{stem}_an"] < 5).all()
 
 
-def test_balmer_decrement_check_and_ledger(run, planted):
+def test_balmer_decrement_and_ledger(run):
     _, work, features, ledger = run
     # planted H-alpha and H-beta share an amplitude, so their flux ratio is the ratio
     # of their observed widths, i.e. of their wavelengths
-    expected = 6564.61 / 4862.683
-    b = ledger["extra"]["balmer_decrement"]["by_class"]
-    assert b, "no class had both Balmer lines measured"
-    for rec in b.values():
-        assert rec["median"] == pytest.approx(expected, rel=0.03)
+    both = features[(features["halpha_status"] == "ok") & (features["hbeta_status"] == "ok")
+                    & (features["halpha_an"] > 5) & (features["hbeta_an"] > 5)]
+    assert len(both) >= 1
+    ratio = (both["halpha_flux"] / both["hbeta_flux"]).to_numpy()
+    assert np.allclose(ratio, 6564.614 / 4862.683, rtol=0.03)
     counts = ledger["counts"]
     assert counts["halpha_measured"] >= 1 and counts["oiii_5007_measured"] >= 3
-    assert ledger["extra"]["flux_frame"] == "observed"
     fits = pd.read_csv(work / line_features.FITS)
     assert {"targetid", "line", "status", "flux", "flux_err", "amp", "sigma_kms"} <= set(fits)
     assert counts["fits"] == len(fits)

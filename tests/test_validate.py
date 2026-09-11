@@ -8,7 +8,6 @@ import h5py
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 from aionflow_data import (
     common,
@@ -44,11 +43,7 @@ def clone(good, tmp_path):
     root, _ = good
     for sub in ("work", "staged"):
         shutil.copytree(root / sub, tmp_path / sub)
-    cfg = make_fx_cfg(tmp_path)
-    text = yaml.safe_load(open(cfg["_config_path"]))
-    with open(cfg["_config_path"], "w") as fh:
-        yaml.safe_dump(text, fh)
-    return common.load_config(cfg["_config_path"])
+    return make_fx_cfg(tmp_path)
 
 
 def _failed(cfg) -> list[str]:
@@ -60,7 +55,7 @@ def _failed(cfg) -> list[str]:
 
 
 def _staged(cfg, split):
-    return common.ledger_path("validate", cfg).parent.parent / "staged" / f"desi_{split}.hdf5"
+    return common.ledger_path("validate", cfg).parent.parent / "staged" / f"{split}.h5"
 
 
 # ----------------------------------------------------------------------------- good run
@@ -70,13 +65,11 @@ def test_good_staging_passes_every_check(good):
     verdict = validate.run(cfg, **QUIET)
     assert verdict["passed"] and verdict["failed"] == []
     names = [c["check"] for c in verdict["checks"]]
-    assert names == ["files_present", "manifest_and_split_present", "schema",
-                     "no_labels_staged", "row_aligned_chunks",
-                     "targetids_unique_and_match_split", "split_fractions",
-                     "manifest_agreement", "flags_vs_content", "value_ranges", "sidecar"]
+    assert names == ["files_present", "manifest_and_split_present", "schema", "targetids",
+                     "split_sizes", "manifest_agreement", "content", "labels"]
     ledger = common.read_ledger("validate", cfg)
     assert ledger["counts"]["staged_targets"] == ledger["counts"]["labelled_targets"]
-    assert ledger["counts"]["log_ml_flux_1_finite"] == ledger["counts"]["staged_targets"]
+    assert ledger["counts"]["log_flux_1_finite"] == ledger["counts"]["staged_targets"]
     assert sum(ledger["counts"][f"rows_{s}"] for s in manifest_split.SPLITS) == \
         ledger["counts"]["staged_targets"]
     assert set(ledger["extra"]["census_by_split"]) == set(manifest_split.SPLITS)
@@ -87,26 +80,24 @@ def test_good_staging_passes_every_check(good):
 
 def test_duplicate_targetid_across_splits(clone):
     with h5py.File(_staged(clone, "train")) as h:
-        stolen = h["desi_targetid"][0]
+        stolen = h["targetid"][0]
     with h5py.File(_staged(clone, "test"), "r+") as h:
-        h["desi_targetid"][0] = stolen
+        h["targetid"][0] = stolen
     failed = _failed(clone)
     # the moved target is also recorded as train in the manifest, so two checks fire
-    assert failed == ["targetids_unique_and_match_split", "manifest_agreement"]
+    assert failed == ["targetids", "manifest_agreement"]
 
 
-def test_label_dataset_staged(clone):
+def test_extra_dataset_breaks_the_schema(clone):
     with h5py.File(_staged(clone, "val"), "r+") as h:
-        h.create_dataset("log_lx", data=np.zeros(h["desi_targetid"].shape[0], np.float32))
-    failed = _failed(clone)
-    assert "schema" in failed and "no_labels_staged" in failed
+        h.create_dataset("log_lx", data=np.zeros(h["targetid"].shape[0], np.float32))
+    assert _failed(clone) == ["schema"]
 
 
-def test_zero_image_with_has_image_true(clone):
+def test_zero_image(clone):
     with h5py.File(_staged(clone, "train"), "r+") as h:
-        i = int(np.flatnonzero(h["has_image"][:])[0])
-        h["image_flux"][i] = 0.0
-    assert _failed(clone) == ["flags_vs_content"]
+        h["image_flux"][0] = 0.0
+    assert _failed(clone) == ["content"]
 
 
 def test_nan_in_spectra_where_ivar_positive(clone):
@@ -115,33 +106,31 @@ def test_nan_in_spectra_where_ivar_positive(clone):
         col = int(np.flatnonzero(h["spectra_ivar"][0] > 0)[0])
         row[col] = np.nan
         h["spectra"][0] = row
-    assert _failed(clone) == ["value_ranges"]
+    assert _failed(clone) == ["content"]
 
 
-def test_sidecar_missing_a_trainer_column(clone):
+def test_labels_missing_a_column(clone):
     work = common.ledger_path("validate", clone).parent.parent / "work"
     path = work / labels.OUTPUT
     pd.read_csv(path).drop(columns=["det_like_0"]).to_csv(path, index=False)
-    assert _failed(clone) == ["sidecar"]
+    assert _failed(clone) == ["labels"]
     assert validate.main(["--config", clone["_config_path"]]) == 1
 
 
-def test_sidecar_missing_a_staged_target(clone):
+def test_labels_missing_a_staged_target(clone):
     work = common.ledger_path("validate", clone).parent.parent / "work"
     path = work / labels.OUTPUT
     frame = pd.read_csv(path)
     frame.iloc[1:].to_csv(path, index=False)
-    failed = _failed(clone)
-    assert failed == ["sidecar"]
+    assert _failed(clone) == ["labels"]
     ledger = common.read_ledger("validate", clone)
     assert "without a label row" in [c for c in ledger["extra"]["checks"]
-                                     if c["check"] == "sidecar"][0]["detail"]
+                                     if c["check"] == "labels"][0]["detail"]
 
 
 def test_missing_staged_file_is_reported_without_crashing(clone):
     _staged(clone, "val").unlink()
-    failed = _failed(clone)
-    assert failed == ["files_present"]
+    assert _failed(clone) == ["files_present"]
 
 
 def test_flag_disagreeing_with_manifest(clone):

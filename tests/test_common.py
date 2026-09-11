@@ -46,13 +46,6 @@ def test_relative_paths_resolve_against_the_config_file(tmp_path):
     assert cfg["paths"]["staged"] == "/abs/staged"
 
 
-def test_config_env_var_is_honoured(tmp_path, monkeypatch):
-    path = tmp_path / "config.yaml"
-    path.write_text(REPO_CONFIG.read_text())
-    monkeypatch.setenv("AIONFLOW_CONFIG", str(path))
-    assert common.load_config()["_config_path"] == str(path)
-
-
 def test_missing_section_is_an_error(tmp_path):
     cfg_in = yaml.safe_load(REPO_CONFIG.read_text())
     del cfg_in["split"]
@@ -64,12 +57,11 @@ def test_missing_section_is_an_error(tmp_path):
 
 # ----------------------------------------------------------------------------- hashing
 
-def test_sha256_and_md5_match_hashlib(tmp_path):
+def test_digests_match_hashlib(tmp_path):
     blob = bytes(range(256)) * 5000
     path = tmp_path / "blob.bin"
     path.write_bytes(blob)
     assert common.sha256(path) == hashlib.sha256(blob).hexdigest()
-    assert common.md5(path) == hashlib.md5(blob).hexdigest()
     assert common.file_digests(path) == {"md5": hashlib.md5(blob).hexdigest(),
                                          "sha256": hashlib.sha256(blob).hexdigest()}
 
@@ -103,8 +95,6 @@ def test_read_fits_columns_returns_requested_columns_only(small_table):
     assert list(out) == ["RA", "ID"]
     assert out["ID"].dtype.byteorder in ("=", "<")
     assert np.array_equal(out["ID"], np.arange(10) * 7)
-    assert common.fits_nrows(small_table) == 10
-    assert common.fits_column_names(small_table) == ["ID", "RA", "NAME", "FLAG"]
 
 
 def test_read_fits_columns_subsets_on_read(small_table):

@@ -2,19 +2,15 @@
 
     python -m aionflow_data.fetch_cutouts [--config CONFIG] [--limit N]
 
-Cutouts are centred on the DESI fibre position (`cutouts.position: fiber`, the
-position the spectrum was taken at) or on the catalogue target position
-(`target`); the two differ by a fraction of a pixel. The cutout service is rate
+Cutouts are centred on the DESI target position. The cutout service is rate
 limited: a second concurrent request answers 429, so requests are sequential
-with a pause between them. At roughly 5 s per cutout the
-full sample takes about eight days, so the job is designed to be left running and
-interrupted freely: one file per target under <work>/cutouts, written to a temp
-name and renamed, resume by file existence. 429 and 5xx back off and retry. A
-response under `min_bytes`, or one that does not parse as a (4, size, size) image
-with the expected bands, is retried and then counted as failed; 404 is a
-permanent failure. Failures do not block the pipeline: a target with no cutout
-stages with a zero image and `has_image` false. The ledger records how many were
-fetched, how many failed, and the failure list.
+with a pause between them. At roughly 5 s per cutout the full sample takes
+about eight days, so the job is designed to be left running and interrupted
+freely: one file per target under <work>/cutouts, written to a temp name and
+renamed, resume by file existence. 429 and 5xx back off and retry. A response
+that does not parse as a (4, size, size) image with the expected bands is
+retried and then counted as failed; 404 is a permanent failure. The ledger
+records how many were fetched, how many failed, and the failure list.
 """
 
 from __future__ import annotations
@@ -53,9 +49,12 @@ def cutout_path(cutout_dir: Path, targetid) -> Path:
 
 def read_cutout(path: Path, size: int, bands: str = "griz") -> np.ndarray:
     """The image as float32 (n_bands, size, size); BadCutout if it is not one."""
-    with fits.open(path, memmap=False) as hdul:
-        image = np.asarray(hdul[0].data, dtype=np.float32)
-        got = str(hdul[0].header.get("BANDS", "")).lower()
+    try:
+        with fits.open(path, memmap=False) as hdul:
+            image = np.asarray(hdul[0].data, dtype=np.float32)
+            got = str(hdul[0].header.get("BANDS", "")).lower()
+    except Exception as exc:                                 # noqa: BLE001 - not a FITS file
+        raise BadCutout(f"{path.name}: not a FITS image ({type(exc).__name__})") from exc
     if image.shape != (len(bands), size, size):
         raise BadCutout(f"{path.name}: shape {image.shape}, expected {(len(bands), size, size)}")
     if got and got != bands:
@@ -65,8 +64,8 @@ def read_cutout(path: Path, size: int, bands: str = "griz") -> np.ndarray:
     return image
 
 
-def fetch_one(url: str, dest: Path, *, min_bytes: int, size: int, bands: str,
-              attempts: int = 5, backoff_s: float = 5.0, max_backoff_s: float = 120.0,
+def fetch_one(url: str, dest: Path, *, size: int, bands: str, attempts: int = 5,
+              backoff_s: float = 5.0, max_backoff_s: float = 120.0,
               timeout_s: float = 120.0) -> str:
     """Returns 'ok' or 'skip' (already present); raises CutoutError after exhausting retries."""
     if dest.exists():
@@ -78,10 +77,7 @@ def fetch_one(url: str, dest: Path, *, min_bytes: int, size: int, bands: str,
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-                blob = resp.read()
-            if len(blob) < min_bytes:
-                raise BadCutout(f"response of {len(blob)} bytes")
-            tmp.write_bytes(blob)
+                tmp.write_bytes(resp.read())
             read_cutout(tmp, size, bands)              # reject before the rename
             tmp.replace(dest)
             return "ok"
@@ -89,7 +85,7 @@ def fetch_one(url: str, dest: Path, *, min_bytes: int, size: int, bands: str,
             last = exc
             if exc.code not in RETRY_HTTP:
                 raise CutoutError(f"HTTP {exc.code}") from exc   # 404 etc: permanent
-        except Exception as exc:                        # timeout, truncated, unparsable
+        except Exception as exc:                        # noqa: BLE001 - timeout, bad image
             last = exc
         tmp.unlink(missing_ok=True)
         time.sleep(delay)
@@ -112,14 +108,8 @@ def run(cfg: dict, *, limit: int | None = None, sleep_s: float | None = None,
     cutout_dir = work / CUTOUT_DIR
     cutout_dir.mkdir(parents=True, exist_ok=True)
 
-    position = str(c.get("position", "target"))
-    if position not in ("fiber", "target"):
-        raise CutoutError(f"cutouts.position must be 'fiber' or 'target', not {position!r}")
-    ra_col, dec_col = (("fiber_ra", "fiber_dec") if position == "fiber"
-                       else ("target_ra", "target_dec"))
-    frame = (pd.read_parquet(xm_path, columns=["targetid", ra_col, dec_col])
-             .drop_duplicates("targetid").reset_index(drop=True)
-             .rename(columns={ra_col: "ra", dec_col: "dec"}))
+    frame = (pd.read_parquet(xm_path, columns=["targetid", "target_ra", "target_dec"])
+             .drop_duplicates("targetid").reset_index(drop=True))
     present = frame["targetid"].map(lambda t: cutout_path(cutout_dir, t).exists()).to_numpy()
     todo = frame[~present]
     if limit:
@@ -132,11 +122,10 @@ def run(cfg: dict, *, limit: int | None = None, sleep_s: float | None = None,
     t0 = time.time()
     for i, row in enumerate(todo.itertuples(index=False), 1):
         dest = cutout_path(cutout_dir, row.targetid)
-        url = template.format(ra=float(row.ra), dec=float(row.dec), **params)
+        url = template.format(ra=float(row.target_ra), dec=float(row.target_dec), **params)
         try:
-            if fetch_one(url, dest, min_bytes=int(c["min_bytes"]), size=params["size"],
-                         bands=params["bands"], backoff_s=backoff_s,
-                         max_backoff_s=float(c["max_backoff_s"]),
+            if fetch_one(url, dest, size=params["size"], bands=params["bands"],
+                         backoff_s=backoff_s, max_backoff_s=float(c["max_backoff_s"]),
                          timeout_s=float(c["timeout_s"])) == "ok":
                 stats["fetched"] += 1
         except CutoutError as exc:
@@ -156,8 +145,7 @@ def run(cfg: dict, *, limit: int | None = None, sleep_s: float | None = None,
     write_ledger(STEP, cfg, inputs={"crossmatch": xm_path},
                  counts={k: stats[k] for k in ("targets", "present_before", "to_fetch",
                                                "fetched", "failed", "present_after")},
-                 extra={"url_template": template, "cutout": params, "position": position,
-                        "min_bytes": int(c["min_bytes"]), "limit": limit,
+                 extra={"url_template": template, "cutout": params, "limit": limit,
                         "failures": stats["failures"][:MAX_LISTED_FAILURES],
                         "failures_listed": min(len(stats["failures"]), MAX_LISTED_FAILURES)})
     log(f"[cutouts] done: {stats['fetched']:,} fetched, {stats['failed']} failed, "

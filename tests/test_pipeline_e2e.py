@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import sys
@@ -69,12 +68,15 @@ def test_make_all_on_the_fixture_config(e2e_cfg, planted):
     assert verdict["passed"], verdict["failed"]
 
     e = planted["expected"]
+    # the served cutout answers every target, so only the split-source pair and the
+    # target without a spectrum are outside the sample here
+    n_sample = e["crossmatch_rows"] - len(e["split_source_detuids"]) - 1
     assert common.read_ledger("crossmatch", loaded)["counts"]["rows_out"] == e["crossmatch_rows"]
-    assert common.read_ledger("manifest_split", loaded)["counts"]["sample_rows"] == e["sample_rows"]
-    staged = json.loads((tmp_path / "staged" / "summary.json").read_text())
-    assert sum(staged["splits"][s]["rows"] for s in SPLITS) == e["sample_rows"]
+    assert common.read_ledger("manifest_split", loaded)["counts"]["sample_rows"] == n_sample
+    staged = common.read_ledger("stage", loaded)["counts"]
+    assert sum(staged[f"rows_{s}"] for s in SPLITS) == n_sample
     features = pd.read_csv(tmp_path / "work" / "line_features.csv")
-    assert len(features) == e["sample_rows"]
+    assert len(features) == n_sample
     cutouts = common.read_ledger("cutouts", loaded)["counts"]
     assert cutouts["fetched"] == cutouts["targets"] == n_cutout_requests
     assert "ALL PASSED" in result.stdout
