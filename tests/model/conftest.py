@@ -8,7 +8,15 @@ import h5py
 import numpy as np
 import pytest
 
-from aionflow_data import common, crossmatch, fetch_spectra, labels, manifest_split, stage
+from aionflow_data import (
+    common,
+    crossmatch,
+    fetch_spectra,
+    labels,
+    line_features,
+    manifest_split,
+    stage,
+)
 from aionflow_model.data import ALL_TOKEN_KEYS, TOKEN_SIZES, TOKENS_FILE, Split, Standardizer
 from aionflow_model.tokenize import CODEC_REPO
 from tests.conftest import FIXTURES, make_fx_cfg
@@ -41,6 +49,7 @@ def staged(tmp_path_factory):
     shutil.copytree(FIXTURES / "cutouts", work / manifest_split.CUTOUT_DIR)
     manifest_split.run(cfg, **QUIET)
     stage.run(cfg, **QUIET)
+    line_features.run(cfg, nproc=1, **QUIET)
     staged_dir = common.ledger_path("stage", cfg).parent.parent / "staged"
     for name in ("train", "val", "test"):
         with h5py.File(staged_dir / f"{name}.h5", "r") as h:

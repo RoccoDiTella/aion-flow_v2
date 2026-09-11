@@ -65,8 +65,30 @@ def sample_subsets(present: Tensor, generator: torch.Generator | None = None) ->
 
 # ----------------------------------------------------------------------------- the model
 
-class Model(nn.Module):
-    """The probe and one flow per head: what produces a head's log likelihood."""
+class Heads(nn.Module):
+    """Whatever turns a batch into one context per head, plus the flows on them.
+
+    The probe is one such thing and the emission-line baseline is another; they
+    share this so that both are scored by exactly the same likelihood.
+    """
+
+    run: Run
+    standardizer: Standardizer
+    flows: nn.ModuleDict
+
+    def contexts(self, batch: dict, mask: Tensor) -> dict[str, Tensor]:
+        raise NotImplementedError
+
+    def log_likelihood(self, batch: dict, mask: Tensor) -> dict[str, tuple[Tensor, Tensor]]:
+        """Per head, the per-row log likelihood and which rows it can score."""
+        contexts = self.contexts(batch, mask)
+        return {head.name: head_log_likelihood(head, self.flows[head.name],
+                                               contexts[head.name], batch, self.standardizer)
+                for head in self.run.heads}
+
+
+class Model(Heads):
+    """The probe and one flow per head."""
 
     def __init__(self, backbone, run: Run, standardizer: Standardizer):
         super().__init__()
@@ -76,12 +98,8 @@ class Model(nn.Module):
         self.flows = nn.ModuleDict({head.name: FlowHead(len(head.targets))
                                     for head in run.heads})
 
-    def log_likelihood(self, batch: dict, mask: Tensor) -> dict[str, tuple[Tensor, Tensor]]:
-        """Per head, the per-row log likelihood and which rows it can score."""
-        contexts = self.probe(batch, mask)
-        return {head.name: head_log_likelihood(head, self.flows[head.name],
-                                               contexts[head.name], batch, self.standardizer)
-                for head in self.run.heads}
+    def contexts(self, batch: dict, mask: Tensor) -> dict[str, Tensor]:
+        return self.probe(batch, mask)
 
     def parameter_groups(self, training) -> list[dict]:
         """The paper's four groups: readouts and CLS, flows, adapters, and no decay on CLS."""

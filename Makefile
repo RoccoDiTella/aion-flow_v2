@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features tokenize train evaluate
+.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features tokenize train evaluate baseline
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -66,6 +66,11 @@ train:  ## train one run: make train RUN=configs/joint4.yaml OUT=runs/joint4 [DE
 	$(PY) -m aionflow_model.train --config $(CONFIG) --run $(RUN) --out $(OUT) \
 		$(if $(DEVICE),--device $(DEVICE),) $(if $(CHUNK),--chunk $(CHUNK),)
 
-evaluate:  ## score a trained run on the test split: make evaluate OUT=runs/joint4 [DEVICE=cuda]
+evaluate:  ## score a trained run on the test split: make evaluate OUT=runs/joint4 [DEVICE=cuda BASELINE=1]
 	$(PY) -m aionflow_model.evaluate --config $(CONFIG) --run-dir $(OUT) \
-		$(if $(DEVICE),--device $(DEVICE),) $(if $(CHUNK),--chunk $(CHUNK),)
+		$(if $(DEVICE),--device $(DEVICE),) $(if $(CHUNK),--chunk $(CHUNK),) \
+		$(if $(BASELINE),--baseline,)
+
+baseline:  ## train the emission-line baseline: make baseline OUT=runs/baseline [DEVICE=cuda]
+	$(PY) -m aionflow_model.baseline --config $(CONFIG) --out $(OUT) \
+		$(if $(DEVICE),--device $(DEVICE),)

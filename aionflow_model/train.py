@@ -115,35 +115,27 @@ def validation_masks(split: Split, seed: int) -> dict[int, torch.Tensor]:
     return {int(t): drawn[i] for i, t in enumerate(split.targetid)}
 
 
-def run(cfg: dict, recipe: str | Path, out: str | Path, *, device: str = "cpu",
+def fit(model, datasets: dict, masks: dict, out: str | Path, *, device: str = "cpu",
         chunk: int = CHUNK, workers: int = 0, max_epochs: int | None = None,
-        backbone=None, log=print) -> dict:
-    recipe = load_run(recipe)
+        choices: dict | None = None, log=print) -> dict:
+    """Train `model` on `datasets["train"]`, select on `datasets["val"]`, write the run
+    directory. The probe and the emission-line baseline both come through here, so the
+    schedule, the selection rule and the checkpoint are the same for both."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    torch.manual_seed(TRAINING.seed)
-    staged, work = Path(cfg["paths"]["staged"]), Path(cfg["paths"]["work"])
-    splits = {name: Split(staged, work, name) for name in ("train", "val")}
-    standardizer = Standardizer.fit(splits["train"])
-    standardizer.write(out / "standardizer.json")
-    if backbone is None:
-        from .encoder import load_backbone
-        backbone = load_backbone()
-    model = Model(backbone, recipe, standardizer).to(device)
     optimizer = torch.optim.AdamW(model.parameter_groups(TRAINING), betas=TRAINING.betas)
     generator = torch.Generator().manual_seed(TRAINING.seed)
-    masks = validation_masks(splits["val"], TRAINING.seed)
-    datasets = {k: TokenDataset(v, standardizer) for k, v in splits.items()}
     epochs = TRAINING.max_epochs if max_epochs is None else int(max_epochs)
     (out / CHOICES).write_text(json.dumps({
-        "run": recipe.name,
-        "heads": {head.name: list(head.targets) for head in recipe.heads},
+        "run": model.run.name,
+        "heads": {head.name: list(head.targets) for head in model.run.heads},
         "validation_metric": "unweighted mean over heads of the per-row NLL on scorable rows",
         "validation_masks": "one subset per source, drawn once at seed "
                             f"{TRAINING.seed + VALIDATION_SEED_OFFSET}",
         "objective": "mean over heads of the per-row NLL, rows weighted by the whole batch",
         "batch_chunk_rows": chunk,
         "training": vars(TRAINING),
+        **(choices or {}),
     }, indent=1) + "\n")
 
     history, best, since = [], None, 0
@@ -159,22 +151,46 @@ def run(cfg: dict, recipe: str | Path, out: str | Path, *, device: str = "cpu",
         history.append({"epoch": epoch, "train": losses, "val": per_head,
                         "metric": metric, "seconds": time.time() - started})
         (out / HISTORY).write_text(json.dumps(history, indent=1) + "\n")
-        improved = best is None or metric < best["metric"] - 0.0
+        improved = best is None or metric < best["metric"]
         log(f"[train] epoch {epoch:3d}  val {metric:.4f}"
             f"{'  *' if improved else ''}  ({history[-1]['seconds']:.1f}s)")
         if improved:
             best, since = {"epoch": epoch, "metric": metric, "per_head": per_head}, 0
-            torch.save({"model": model.state_dict(), "run": recipe.name,
-                        "standardizer": standardizer.as_dict(), **best}, out / CHECKPOINT)
+            torch.save({"model": model.state_dict(), "run": model.run.name,
+                        "standardizer": model.standardizer.as_dict(), **best},
+                       out / CHECKPOINT)
         else:
             since += 1
             if since >= TRAINING.patience:
                 log(f"[train] no improvement for {since} epochs; stopping")
                 break
-    for split in splits.values():
-        split.close()
     log(f"[train] best epoch {best['epoch']} at {best['metric']:.4f} -> {out / CHECKPOINT}")
     return {"best": best, "history": history}
+
+
+def run(cfg: dict, recipe: str | Path, out: str | Path, *, device: str = "cpu",
+        chunk: int = CHUNK, workers: int = 0, max_epochs: int | None = None,
+        backbone=None, log=print) -> dict:
+    recipe = load_run(recipe)
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    torch.manual_seed(TRAINING.seed)
+    staged, work = Path(cfg["paths"]["staged"]), Path(cfg["paths"]["work"])
+    splits = {name: Split(staged, work, name) for name in ("train", "val")}
+    standardizer = Standardizer.fit(splits["train"])
+    standardizer.write(out / "standardizer.json")
+    if backbone is None:
+        from .encoder import load_backbone
+        backbone = load_backbone()
+    model = Model(backbone, recipe, standardizer).to(device)
+    datasets = {k: TokenDataset(v, standardizer) for k, v in splits.items()}
+    masks = validation_masks(splits["val"], TRAINING.seed)
+    try:
+        return fit(model, datasets, masks, out, device=device, chunk=chunk, workers=workers,
+                   max_epochs=max_epochs, log=log)
+    finally:
+        for split in splits.values():
+            split.close()
 
 
 def main(argv: list[str] | None = None) -> int:

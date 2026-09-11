@@ -20,6 +20,10 @@ Every combination is scored on one common subsample per head, fixed across the 1
 rows so they are comparable: the test sources that hold all four modalities and
 every one of the head's targets. Its size is an output, recorded, not a target.
 
+The emission-line baseline is scored through this same function, with `--baseline`,
+so Figure 1's comparison is against the same prior on the same subsample. Its 15
+rows are identical to each other, since it reads no modality.
+
 Outputs in the run directory: `results.json` with a row per head and combination,
 and `per_source.csv` with each test source's log likelihood under every
 combination, which is what the bootstrap, Figure 2's redshift trend and the
@@ -51,7 +55,7 @@ from .data import (
     log_plug_in_rate,
 )
 from .flows import GaussianKDE
-from .objective import SUBSET_NAMES, SUBSETS, Model, head_log_likelihood, observed
+from .objective import SUBSET_NAMES, SUBSETS, Heads, Model, head_log_likelihood, observed
 from .train import CHECKPOINT, chunks, to_device
 
 RESULTS = "results.json"
@@ -109,7 +113,7 @@ def common_subsample(head: Head, split: Split) -> np.ndarray:
 # ----------------------------------------------------------------------------- one pass
 
 @torch.no_grad()
-def score(model: Model, batches, mask_row: torch.Tensor, device, chunk: int, draws: int,
+def score(model: Heads, batches, mask_row: torch.Tensor, device, chunk: int, draws: int,
           keep_draws: bool = False) -> dict[str, dict[str, np.ndarray]]:
     """Per head, the log likelihood and the posterior mean of every row, under one
     combination held fixed across sources. The draws themselves are kept only for the
@@ -120,7 +124,7 @@ def score(model: Model, batches, mask_row: torch.Tensor, device, chunk: int, dra
         for part in chunks(batch, chunk):
             rows = part["y"].shape[0]
             mask = mask_row.to(device).expand(rows, -1)
-            contexts = model.probe(part, mask)
+            contexts = model.contexts(part, mask)
             for head in model.run.heads:
                 flow = model.flows[head.name]
                 values, _ = head_log_likelihood(head, flow, contexts[head.name], part,
@@ -168,12 +172,14 @@ def coverage(head: Head, sample: np.ndarray, split: Split, standardizer: Standar
 
 # ----------------------------------------------------------------------------- the run
 
-def evaluate(model: Model, splits: dict[str, Split], *, device: str = "cpu",
-             chunk: int = 448, draws: int = DRAWS, workers: int = 0,
+def evaluate(model: Heads, splits: dict[str, Split], *, device: str = "cpu",
+             chunk: int = 448, draws: int = DRAWS, workers: int = 0, dataset=None,
              log=print) -> tuple[dict, pd.DataFrame]:
+    """`dataset` defaults to the staged tokens; the baseline passes its own, so both
+    are scored against the same prior on the same common subsample."""
     test, train = splits["test"], splits["train"]
     standardizer = model.standardizer
-    dataset = TokenDataset(test, standardizer)
+    dataset = TokenDataset(test, standardizer) if dataset is None else dataset
     priors = {head.name: fit_prior(head, train, standardizer).to(device)
               for head in model.run.heads}
     keep = {head.name: common_subsample(head, test) for head in model.run.heads}
@@ -221,25 +227,32 @@ def evaluate(model: Model, splits: dict[str, Split], *, device: str = "cpu",
 
 
 def run(cfg: dict, run_dir: str | Path, *, device: str = "cpu", chunk: int = 448,
-        draws: int = DRAWS, workers: int = 0, backbone=None, log=print) -> dict:
+        draws: int = DRAWS, workers: int = 0, baseline: bool = False, backbone=None,
+        log=print) -> dict:
     run_dir = Path(run_dir)
-    checkpoint_path = run_dir / CHECKPOINT
-    if not checkpoint_path.is_file():
-        raise EvaluateError(f"no checkpoint at {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    recipe = load_run(Path("configs") / f"{checkpoint['run']}.yaml")
-    standardizer = Standardizer.from_dict(checkpoint["standardizer"])
-    if backbone is None:
-        from .encoder import load_backbone
-        backbone = load_backbone()
-    model = Model(backbone, recipe, standardizer).to(device)
-    model.load_state_dict(checkpoint["model"])
-    model.eval()
+    if not (run_dir / CHECKPOINT).is_file():
+        raise EvaluateError(f"no checkpoint at {run_dir / CHECKPOINT}")
     staged, work = Path(cfg["paths"]["staged"]), Path(cfg["paths"]["work"])
     splits = {name: Split(staged, work, name) for name in ("train", "test")}
     try:
+        if baseline:
+            from .baseline import LineDataset, load
+            model, mean, scale = load(run_dir, work, device)
+            dataset = LineDataset(splits["test"], model.standardizer, work, mean, scale)
+        else:
+            checkpoint = torch.load(run_dir / CHECKPOINT, map_location=device,
+                                    weights_only=False)
+            standardizer = Standardizer.from_dict(checkpoint["standardizer"])
+            if backbone is None:
+                from .encoder import load_backbone
+                backbone = load_backbone()
+            recipe = load_run(Path("configs") / f"{checkpoint['run']}.yaml")
+            model = Model(backbone, recipe, standardizer).to(device)
+            model.load_state_dict(checkpoint["model"])
+            model.eval()
+            dataset = None
         results, frame = evaluate(model, splits, device=device, chunk=chunk, draws=draws,
-                                  workers=workers, log=log)
+                                  workers=workers, dataset=dataset, log=log)
     finally:
         for split in splits.values():
             split.close()
@@ -257,10 +270,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--chunk", type=int, default=448, help="rows per forward")
     parser.add_argument("--draws", type=int, default=DRAWS, help="posterior draws per source")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--baseline", action="store_true",
+                        help="the run directory holds an emission-line baseline")
     args = parser.parse_args(argv)
     try:
         run(load_config(args.config), args.run_dir, device=args.device, chunk=args.chunk,
-            draws=args.draws, workers=args.workers)
+            draws=args.draws, workers=args.workers, baseline=args.baseline)
     except (EvaluateError, OSError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

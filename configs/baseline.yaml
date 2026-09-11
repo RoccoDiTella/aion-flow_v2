@@ -1,0 +1,7 @@
+# The emission-line baseline: the same four scalar heads on four line fluxes.
+name: baseline
+heads:
+  flux: [flux]
+  lx: [lx]
+  sfr: [sfr]
+  mstar: [mstar]
