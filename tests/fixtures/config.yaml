@@ -4,22 +4,22 @@ inputs:
     file: nway.fits
     url: fixture://nway.fits
     bytes: 17280
-    md5: c23e0de3e188045cd7e9deb4a205a0bc
+    md5: e9532af810eff1ca5063a89a05482967
   main:
     file: main.fits
     url: fixture://main.fits
     bytes: 34560
-    md5: 8073d6f429d0e8c9cf71009de7e91904
+    md5: 499797793782c85144c85cdb6f4ec18d
   desi_zcat:
     file: zall_pix.fits
     url: fixture://zall_pix.fits
     bytes: 14400
-    md5: 199f1c00f63d5caf58f676d3fab669ea
+    md5: dd38d34b13870e561b152d78cedd303f
   cigale:
     file: cigale.fits
     url: fixture://cigale.fits
     bytes: 17280
-    md5: c58fcbdcd0b889f3736c76a81e2a4ae6
+    md5: b31738f4369ba85c9105d2eec2566680
 archives:
   desi_coadd_url: coadd/coadd-{survey}-{program}-{pix}.fits
   ls_cutout_url: https://www.legacysurvey.org/viewer/fits-cutout?ra={ra:.6f}&dec={dec:.6f}&layer={layer}&pixscale={pixscale}&size={size}&bands={bands}
@@ -51,6 +51,7 @@ cutouts:
   pixscale: 0.262
   size: 32
   bands: griz
+  position: fiber
   sleep_s: 0.4
   backoff_s: 5.0
   max_backoff_s: 120.0

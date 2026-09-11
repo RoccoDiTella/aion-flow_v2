@@ -2,8 +2,11 @@
 
     python -m aionflow_data.fetch_cutouts [--config CONFIG] [--limit N]
 
-The cutout service is rate limited: a second concurrent request answers 429, so
-requests are sequential with a pause between them. At roughly 5 s per cutout the
+Cutouts are centred on the DESI fibre position (`cutouts.position: fiber`, the
+position the spectrum was taken at) or on the catalogue target position
+(`target`); the two differ by a fraction of a pixel. The cutout service is rate
+limited: a second concurrent request answers 429, so requests are sequential
+with a pause between them. At roughly 5 s per cutout the
 full sample takes about eight days, so the job is designed to be left running and
 interrupted freely: one file per target under <work>/cutouts, written to a temp
 name and renamed, resume by file existence. 429 and 5xx back off and retry. A
@@ -109,8 +112,14 @@ def run(cfg: dict, *, limit: int | None = None, sleep_s: float | None = None,
     cutout_dir = work / CUTOUT_DIR
     cutout_dir.mkdir(parents=True, exist_ok=True)
 
-    frame = (pd.read_parquet(xm_path, columns=["targetid", "target_ra", "target_dec"])
-             .drop_duplicates("targetid").reset_index(drop=True))
+    position = str(c.get("position", "target"))
+    if position not in ("fiber", "target"):
+        raise CutoutError(f"cutouts.position must be 'fiber' or 'target', not {position!r}")
+    ra_col, dec_col = (("fiber_ra", "fiber_dec") if position == "fiber"
+                       else ("target_ra", "target_dec"))
+    frame = (pd.read_parquet(xm_path, columns=["targetid", ra_col, dec_col])
+             .drop_duplicates("targetid").reset_index(drop=True)
+             .rename(columns={ra_col: "ra", dec_col: "dec"}))
     present = frame["targetid"].map(lambda t: cutout_path(cutout_dir, t).exists()).to_numpy()
     todo = frame[~present]
     if limit:
@@ -123,7 +132,7 @@ def run(cfg: dict, *, limit: int | None = None, sleep_s: float | None = None,
     t0 = time.time()
     for i, row in enumerate(todo.itertuples(index=False), 1):
         dest = cutout_path(cutout_dir, row.targetid)
-        url = template.format(ra=float(row.target_ra), dec=float(row.target_dec), **params)
+        url = template.format(ra=float(row.ra), dec=float(row.dec), **params)
         try:
             if fetch_one(url, dest, min_bytes=int(c["min_bytes"]), size=params["size"],
                          bands=params["bands"], backoff_s=backoff_s,
@@ -147,7 +156,7 @@ def run(cfg: dict, *, limit: int | None = None, sleep_s: float | None = None,
     write_ledger(STEP, cfg, inputs={"crossmatch": xm_path},
                  counts={k: stats[k] for k in ("targets", "present_before", "to_fetch",
                                                "fetched", "failed", "present_after")},
-                 extra={"url_template": template, "cutout": params,
+                 extra={"url_template": template, "cutout": params, "position": position,
                         "min_bytes": int(c["min_bytes"]), "limit": limit,
                         "failures": stats["failures"][:MAX_LISTED_FAILURES],
                         "failures_listed": min(len(stats["failures"]), MAX_LISTED_FAILURES)})

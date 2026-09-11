@@ -13,7 +13,7 @@ made. Constants are in `config.yaml`; this page states them where they matter.
 | 3 | `zall-pix-iron.fits` | 28,425,963 | DESI DR1 redshift catalogue, one row per (target, survey, program) coadd; `ZCAT_PRIMARY` marks DESI's best observation |
 | 4 | `IronPhysProp_v1.2.fits` | 17,149,172 | DESI DR1 CIGALE fits to grz + W1-W4 photometry at the DESI redshift |
 | 5 | DESI DR1 healpix coadds | read by HTTP range | `coadd-{survey}-{program}-{healpix}.fits`, cameras B, R, Z |
-| 6 | Legacy Survey DR10 cutouts | one per target | `ls-dr10`, 160 px at 0.262"/px, bands griz |
+| 6 | Legacy Survey DR10 cutouts | one per target | `ls-dr10`, 160 px at 0.262"/px, bands griz, centred on the DESI fibre position (`cutouts.position`, or `target` for the catalogue position; a fraction of a pixel apart) |
 
 Sizes, URLs and checksums: `config.yaml`. The fetch step (`data/provenance/raw.json`)
 records what was retrieved and when.
@@ -68,8 +68,9 @@ One row per (detection, target). Columns: `targetid`; from NWAY `ero_detuid`,
 `nway_dist_bayesfactor`, `nway_sep_arcsec`, `ls10_flux_w1..w3`,
 `ls10_flux_ivar_w1..w3`, `ls10_shape_r`, `ls10_sersic`, `ls10_type`,
 `ls10_xray_proba`, `exgal_prob_starex`, `class_gal_exgal`,
-`simbad_known_galactic`; from DESI `target_ra`, `target_dec`, `survey`,
-`program`, `healpix`, `spectype`, `z`, `zwarn`, `deltachi2`; match diagnostics
+`simbad_known_galactic`; from DESI `target_ra`, `target_dec`, `fiber_ra`,
+`fiber_dec`, `survey`, `program`, `healpix`, `spectype`, `z`, `zwarn`,
+`deltachi2`; match diagnostics
 `sep_arcsec`, `n_candidates`, `preferred_over_nearest`, `desi_release`,
 `is_main_survey`, `reliability_branch`, `split_source`, `collision_group_size`.
 

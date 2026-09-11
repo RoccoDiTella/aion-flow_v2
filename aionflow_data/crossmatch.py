@@ -62,9 +62,10 @@ NWAY_COLUMNS = {
     "class_gal_exgal": "class_gal_exgal", "simbad_known_galactic": "simbad_known_galactic",
 }
 DESI_COLUMNS = {
-    "TARGET_RA": "target_ra", "TARGET_DEC": "target_dec", "SURVEY": "survey",
-    "PROGRAM": "program", "HEALPIX": "healpix", "SPECTYPE": "spectype", "Z": "z",
-    "ZWARN": "zwarn", "DELTACHI2": "deltachi2",
+    "TARGET_RA": "target_ra", "TARGET_DEC": "target_dec",
+    "MEAN_FIBER_RA": "fiber_ra", "MEAN_FIBER_DEC": "fiber_dec",
+    "SURVEY": "survey", "PROGRAM": "program", "HEALPIX": "healpix", "SPECTYPE": "spectype",
+    "Z": "z", "ZWARN": "zwarn", "DELTACHI2": "deltachi2",
 }
 MATCH_COLUMNS = ["sep_arcsec", "n_candidates", "preferred_over_nearest", "desi_release",
                  "is_main_survey", "reliability_branch", "split_source", "collision_group_size"]

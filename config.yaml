@@ -71,6 +71,9 @@ cutouts:
   pixscale: 0.262
   size: 160
   bands: griz
+  # centre: 'fiber' (DESI MEAN_FIBER_RA/DEC, where the spectrum was taken) or 'target'
+  # (the catalogue position); they differ by a fraction of a pixel
+  position: fiber
   sleep_s: 0.4
   backoff_s: 5.0
   max_backoff_s: 120.0

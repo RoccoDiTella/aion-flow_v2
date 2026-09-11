@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 
 import numpy as np
+import pandas as pd
 import pytest
 import yaml
 from astropy.io import fits
@@ -28,6 +29,7 @@ def served(tmp_path, planted):
 
 
 def make_cfg(tmp_path, base_url, **cutout_overrides):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     cfg = make_fx_cfg(tmp_path)
     text = yaml.safe_load(open(cfg["_config_path"]))
     text["archives"]["ls_cutout_url"] = (
@@ -60,19 +62,33 @@ def test_fetches_one_file_per_target_at_the_target_position(tmp_path, served, pl
     size = cfg["cutouts"]["size"]
     for path in files:
         assert fetch_cutouts.read_cutout(path, size).shape == (4, size, size)
-    # the request carries the DESI target position and the configured cutout parameters
-    xm = common.read_ledger("crossmatch", cfg)
-    assert xm is not None
+    # the request carries the DESI fibre position (the default) and the cutout parameters
     gets = [r[1] for r in server.requests]
     assert len(gets) == n_targets
-    import pandas as pd
     frame = pd.read_parquet(tmp_path / "work" / crossmatch.OUTPUT).drop_duplicates("targetid")
-    first = frame.iloc[0]
-    assert any(f"ra={first.target_ra:.6f}&dec={first.target_dec:.6f}" in g for g in gets)
+    for row in frame.itertuples():
+        assert any(f"ra={row.fiber_ra:.6f}&dec={row.fiber_dec:.6f}" in g for g in gets)
+    off = frame[frame["fiber_ra"] != frame["target_ra"]].iloc[0]
+    assert not any(f"ra={off.target_ra:.6f}&dec={off.target_dec:.6f}" in g for g in gets)
     assert all(f"layer=ls-dr10&pixscale=0.262&size={size}&bands=griz" in g for g in gets)
     ledger = common.read_ledger("cutouts", cfg)
     assert ledger["counts"]["fetched"] == n_targets and ledger["extra"]["failures"] == []
-    assert ledger["extra"]["cutout"]["size"] == size
+    assert ledger["extra"]["cutout"]["size"] == size and ledger["extra"]["position"] == "fiber"
+
+
+def test_target_position_is_a_config_choice(tmp_path, served):
+    with serve(served) as (server, url):
+        cfg = make_cfg(tmp_path, url, position="target")
+        fetch_cutouts.run(cfg, limit=5, **FAST, **QUIET)
+    frame = pd.read_parquet(tmp_path / "work" / crossmatch.OUTPUT).drop_duplicates("targetid")
+    gets = [r[1] for r in server.requests]
+    for row in frame.head(5).itertuples():
+        assert any(f"ra={row.target_ra:.6f}&dec={row.target_dec:.6f}" in g for g in gets)
+    assert common.read_ledger("cutouts", cfg)["extra"]["position"] == "target"
+    with serve(served) as (_, url):
+        cfg = make_cfg(tmp_path / "bad", url, position="centroid")
+        with pytest.raises(fetch_cutouts.CutoutError, match="position"):
+            fetch_cutouts.run(cfg, limit=1, **FAST, **QUIET)
 
 
 def test_rerun_skips_present_files(tmp_path, served):

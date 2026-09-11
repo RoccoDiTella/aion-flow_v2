@@ -65,7 +65,8 @@ NWAY_SPEC = [
     ("DET_LIKE_0", "E"), ("ML_FLUX_1", "E"),
 ]
 ZALL_SPEC = [
-    ("TARGETID", "K"), ("TARGET_RA", "D"), ("TARGET_DEC", "D"), ("ZCAT_PRIMARY", "L"),
+    ("TARGETID", "K"), ("TARGET_RA", "D"), ("TARGET_DEC", "D"),
+    ("MEAN_FIBER_RA", "D"), ("MEAN_FIBER_DEC", "D"), ("ZCAT_PRIMARY", "L"),
     ("SURVEY", "7A"), ("PROGRAM", "6A"), ("HEALPIX", "J"), ("SPECTYPE", "6A"), ("Z", "D"),
     ("ZWARN", "K"), ("DELTACHI2", "D"), ("RELEASE", "I"), ("BRICKID", "J"), ("BRICK_OBJID", "J"),
 ]
@@ -178,7 +179,14 @@ class Builder:
     def add_desi(self, targetid: int, ra: float, dec: float, spectype: str, z: float, *,
                  survey="main", program="dark", healpix=1234, zwarn=0, primary=True,
                  brickid=0, objid=0, release=MAIN_RELEASE) -> dict:
-        row = dict(TARGETID=targetid, TARGET_RA=ra, TARGET_DEC=dec, ZCAT_PRIMARY=primary,
+        # the fibre sits a fraction of a pixel from the target, exactly on it for some
+        if self.rng.uniform() < 0.3:
+            fra, fdec = ra, dec
+        else:
+            u = self.rng.uniform
+            fra, fdec = offset(ra, dec, u(-0.15, 0.15), u(-0.15, 0.15))
+        row = dict(TARGETID=targetid, TARGET_RA=ra, TARGET_DEC=dec,
+                   MEAN_FIBER_RA=fra, MEAN_FIBER_DEC=fdec, ZCAT_PRIMARY=primary,
                    SURVEY=survey, PROGRAM=program, HEALPIX=healpix, SPECTYPE=spectype, Z=z,
                    ZWARN=zwarn, DELTACHI2=float(self.rng.uniform(20, 500)),
                    RELEASE=release if brickid else (0 if targetid & GAIA_BIT else -1),

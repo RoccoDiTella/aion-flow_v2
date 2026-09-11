@@ -151,6 +151,11 @@ def test_carried_columns_and_types(run, planted):
     r = frame[frame["targetid"] == S["z_nonpositive"]["targetid"]].iloc[0]
     assert r["z"] < 0 and r["spectype"] == "STAR"
     assert frame["targetid"].dtype == np.int64
+    # the fibre position is carried next to the target position and sits within 1"
+    cosdec = np.cos(np.radians(frame["target_dec"]))
+    sep = np.hypot((frame["fiber_ra"] - frame["target_ra"]) * cosdec,
+                   frame["fiber_dec"] - frame["target_dec"]) * 3600
+    assert (sep < 1.0).all() and (sep == 0).any() and (sep > 0).any()
     assert frame["survey"].isin(["main"]).all()
     assert set(frame["program"]) <= {"dark", "bright", "backup"}
     assert frame["ls10_type"].str.len().between(3, 3).all()

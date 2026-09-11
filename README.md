@@ -30,7 +30,7 @@ Column definitions, selection rules and the counts of the canonical run are in
 | DESI redshift catalogue | DR1 (iron), `zall-pix-iron` | 21.3 GB |
 | DESI CIGALE physical properties VAC | DR1, `IronPhysProp_v1.2` | 7.32 GB |
 | DESI healpix coadd spectra | DR1 (iron) | ~13 GB read by HTTP range, only our rows |
-| Legacy Survey DR10 cutouts | `ls-dr10`, 160 px at 0.262"/px, griz | ~55 GB, one file per target |
+| Legacy Survey DR10 cutouts | `ls-dr10`, 160 px at 0.262"/px, griz, centred on the DESI fibre position | ~55 GB, one file per target |
 
 URLs, sizes and checksums are pinned in `config.yaml`; the fetch step verifies
 them and, where the publisher ships one, the publisher's checksum sidecar.
