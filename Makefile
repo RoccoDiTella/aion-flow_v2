@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures fetch clean-raw crossmatch labels
+.PHONY: help test lint fixtures fetch clean-raw crossmatch labels spectra
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -37,3 +37,6 @@ crossmatch:  ## step 1: NWAY x DESI 1" match with the selection rules -> work/cr
 
 labels:  ## step 2: X-ray labels from the Main catalogue, host labels from CIGALE -> work/labels.csv
 	$(PY) -m aionflow_data.labels --config $(CONFIG)
+
+spectra:  ## step 3: fetch DESI coadd spectra into shards and merge -> work/spectra/source.h5 (LIMIT_GROUPS=N for a smoke)
+	$(PY) -m aionflow_data.fetch_spectra --config $(CONFIG) $(if $(LIMIT_GROUPS),--limit-groups $(LIMIT_GROUPS),)
