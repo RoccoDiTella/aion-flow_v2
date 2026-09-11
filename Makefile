@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features tokenize train
+.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features tokenize train evaluate
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -64,4 +64,8 @@ tokenize:  ## run AION's frozen codecs once per split -> staged/tokens_{train,va
 
 train:  ## train one run: make train RUN=configs/joint4.yaml OUT=runs/joint4 [DEVICE=cuda CHUNK=448]
 	$(PY) -m aionflow_model.train --config $(CONFIG) --run $(RUN) --out $(OUT) \
+		$(if $(DEVICE),--device $(DEVICE),) $(if $(CHUNK),--chunk $(CHUNK),)
+
+evaluate:  ## score a trained run on the test split: make evaluate OUT=runs/joint4 [DEVICE=cuda]
+	$(PY) -m aionflow_model.evaluate --config $(CONFIG) --run-dir $(OUT) \
 		$(if $(DEVICE),--device $(DEVICE),) $(if $(CHUNK),--chunk $(CHUNK),)
