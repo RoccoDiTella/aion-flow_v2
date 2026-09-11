@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures fetch clean-raw crossmatch labels spectra cutouts manifest_split
+.PHONY: help test lint fixtures fetch clean-raw crossmatch labels spectra cutouts manifest_split stage
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -46,3 +46,6 @@ cutouts:  ## step 4: fetch Legacy Survey cutouts, one FITS per target -> work/cu
 
 manifest_split:  ## step 5: presence flags, the sample, component-grouped keyed split -> work/manifest.csv, work/split.csv
 	$(PY) -m aionflow_data.manifest_split --config $(CONFIG)
+
+stage:  ## step 6: inputs-only per-split HDF5 with row-aligned chunks -> staged/desi_{train,val,test}.hdf5
+	$(PY) -m aionflow_data.stage --config $(CONFIG)
