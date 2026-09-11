@@ -44,10 +44,10 @@ spectra:  ## step 3: fetch DESI coadd spectra into shards and merge -> work/spec
 cutouts:  ## step 4: fetch Legacy Survey cutouts, one FITS per target -> work/cutouts/ (LIMIT=N for a smoke; ~8 days in full)
 	$(PY) -m aionflow_data.fetch_cutouts --config $(CONFIG) $(if $(LIMIT),--limit $(LIMIT),)
 
-manifest_split:  ## step 5: presence flags, the sample, component-grouped keyed split -> work/manifest.csv, work/split.csv
+manifest_split:  ## step 5: presence flags, the sample, the seeded permutation split -> work/manifest.csv, work/split.csv
 	$(PY) -m aionflow_data.manifest_split --config $(CONFIG)
 
-stage:  ## step 6: inputs-only per-split HDF5 with row-aligned chunks -> staged/desi_{train,val,test}.hdf5
+stage:  ## step 6: inputs-only per-split HDF5, row-chunked -> staged/{train,val,test}.h5
 	$(PY) -m aionflow_data.stage --config $(CONFIG)
 
 validate:  ## step 7: check the staged files, split and labels; non-zero exit on any failure

@@ -1,0 +1,4 @@
+# The four-dimensional joint behind the within-object correlation.
+name: joint4
+heads:
+  joint4: [rate_p2, rate_p3, sfr, mstar]

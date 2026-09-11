@@ -1,0 +1,4 @@
+# The joint over the two latent band rates, for the hardness ratio.
+name: rates
+heads:
+  rates: [rate_p2, rate_p3]

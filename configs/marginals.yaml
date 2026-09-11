@@ -1,0 +1,8 @@
+# Four scalar heads and a two-dimensional joint over (SFR, M*).
+name: marginals
+heads:
+  flux: [flux]
+  lx: [lx]
+  sfr: [sfr]
+  mstar: [mstar]
+  sfr_mstar: [sfr, mstar]

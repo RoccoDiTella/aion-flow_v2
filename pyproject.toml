@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aionflow-data"
+name = "aionflow"
 version = "0.1.0"
-description = "Data pipeline for the AION X-ray paper: eROSITA DR2 x DESI DR1 x Legacy Survey DR10 inputs, labels and split."
+description = "Companion code for the AION X-ray paper: the eROSITA x DESI x Legacy Survey data pipeline, and the read-only CLS probe with normalizing-flow heads."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -23,10 +23,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
+model = [
+    "torch>=2.4",
+    "zuko>=1.6",
+    "polymathic-aion>=0.0.2",
+    "safetensors>=0.4",
+    "matplotlib>=3.8",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["aionflow_data*"]
+include = ["aionflow_data*", "aionflow_model*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
