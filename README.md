@@ -1,12 +1,19 @@
 # aion-flow_v2
 
-Data pipeline for *Probabilistic probes for galaxy evolution: signatures of AGN
-feedback in the AION foundation model*. From four public catalogues and two
-public archives it builds the training inputs, the label table, the
-train/validation/test split and the emission-line baseline features that the
-paper's models consume. Every step is deterministic, resumable, and writes a
-provenance ledger with the checksums of what it read, the counts of what it
-wrote, and every row it cut.
+Companion code for *Probabilistic probes for galaxy evolution: signatures of AGN
+feedback in the AION foundation model*.
+
+`aionflow_data` builds the data. From four public catalogues and two public
+archives it makes the training inputs, the label table, the
+train/validation/test split and the emission-line baseline features. Every step
+is deterministic, resumable, and writes a provenance ledger with the checksums
+of what it read, the counts of what it wrote, and every row it cut.
+
+`aionflow_model` is the probe. A read-only CLS token pools information through
+the frozen AION-1-B encoder, and normalizing-flow heads on that summary give
+posteriors over X-ray and host-galaxy properties, with an exact Poisson marginal
+likelihood for the photon counts so a zero-count band is a measurement rather
+than a missing value. See [docs/MODEL.md](docs/MODEL.md).
 
 ## What it produces
 
@@ -20,6 +27,17 @@ wrote, and every row it cut.
 
 Column definitions, selection rules and the counts of the canonical run are in
 [docs/DATA.md](docs/DATA.md).
+
+### The model
+
+| output | contents |
+|---|---|
+| `data/staged/tokens_{train,val,test}.h5` | AION's 853 token ids per source, from its frozen codecs |
+| `runs/<name>/best.pt` | the selected checkpoint, with its standardizers |
+| `runs/<name>/{choices,history}.json` | what the paper leaves open, and the epoch-by-epoch metric |
+| `runs/<name>/{results.json,per_source.csv}` | information gain, R2 and coverage over the 15 input combinations, and every test source's log likelihood under each |
+| `results/{analysis.json,rho.csv,hardness.csv}` | sSFR under the joint, hardness-ratio posteriors, the within-object correlation |
+| `figures/` | Figures 1 to 3 and Table 1 |
 
 ## Inputs
 
@@ -63,6 +81,25 @@ inputs.
 The cutout fetch is the long pole and can start as soon as the crossmatch
 exists; it is safe to interrupt and rerun.
 
+Then the model, which needs the `[model]` extra and a GPU:
+
+```sh
+uv pip install -e ".[dev,model]"
+make tokenize DEVICE=cuda                                  # once; the codecs are frozen
+make train RUN=configs/marginals.yaml OUT=runs/marginals DEVICE=cuda
+make train RUN=configs/rates.yaml     OUT=runs/rates     DEVICE=cuda
+make train RUN=configs/joint4.yaml    OUT=runs/joint4    DEVICE=cuda
+make baseline OUT=runs/baseline
+make evaluate OUT=runs/marginals DEVICE=cuda               # and for each run
+make analysis DEVICE=cuda && make figures
+```
+
+The three runs differ only in their heads: four scalar heads with a (SFR, M*)
+joint, the two-band rate joint, and the four-dimensional joint behind the
+within-object correlation. Tokenizing is a step of its own because AION's codecs
+cost about half a second per source, two orders of magnitude more than the
+encoder pass they feed, and are frozen and deterministic.
+
 ## The sample in one paragraph
 
 DESI DR1 primary targets are matched to the LS10 positions of the eROSITA DR2
@@ -83,20 +120,27 @@ carried as label gates and presence flags, never as sample cuts.
 ```
 config.yaml            every URL, checksum, constant and path
 Makefile               one target per step; `all`, `test`, `lint`, `fixtures`
+configs/               one run recipe per reported run: a name and a head list
 aionflow_data/         one module per step, plus common.py and linefit.py
+aionflow_model/        the probe, the flows, the objective, training and analysis
 tests/                 one test file per step; tests/fixtures holds synthetic
-                       catalogues, coadds and cutouts with every edge case planted
+                       catalogues, coadds and cutouts with every edge case planted;
+                       tests/model holds the stand-in encoder and codecs
 docs/DATA.md           the data contract
+docs/MODEL.md          the method, and every choice the paper leaves open
 data/provenance/       committed ledgers of the canonical run
 ```
 
 ## Tests
 
-`make test` runs about 110 tests in half a minute on the committed fixtures.
+`make test` runs about 230 tests in a minute on the committed fixtures, with no
+network and no pretrained weights: the model's tests run against a stand-in
+encoder built from AION's own transformer block, and two opt-in tests
+(`AIONFLOW_TEST_AION=1`) check the real 318M-parameter backbone and codecs.
 `tests/fixtures/make_fixtures.py` generates them deterministically and records
 in `planted.json` what each step must produce, so the tests assert against
-construction rather than against a previous run. The last test runs `make all`
-end to end on that fixture config.
+construction rather than against a previous run. One test runs `make all` end to
+end on that fixture config.
 
 ## License
 

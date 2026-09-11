@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features tokenize train evaluate baseline analysis
+.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features tokenize train evaluate baseline analysis figures
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -79,3 +79,7 @@ analysis:  ## sSFR, hardness ratios, the within-object correlation and the boots
 	$(PY) -m aionflow_model.analysis --config $(CONFIG) --out results \
 		--marginals runs/marginals --rates runs/rates --joint4 runs/joint4 \
 		$(if $(DEVICE),--device $(DEVICE),)
+
+figures:  ## Figures 1 to 3 and Table 1 from results/ into figures/
+	$(PY) -m aionflow_model.figures --analysis results --out figures \
+		--marginals runs/marginals --baseline runs/baseline
