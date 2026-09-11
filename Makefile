@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint
+.PHONY: help test lint fixtures
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -19,3 +19,6 @@ test:  ## run the test suite on the committed fixtures
 
 lint:  ## static checks
 	$(PY) -m ruff check .
+
+fixtures:  ## regenerate tests/fixtures (deterministic; commit the result)
+	$(PY) tests/fixtures/make_fixtures.py

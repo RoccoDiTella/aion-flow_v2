@@ -41,6 +41,10 @@ crossmatch:
   main_survey_releases: [9010, 9011, 9012]
   # Rows whose NWAY_threshold6 is absent are kept at this flat p_any instead.
   uncalibrated_p_any_min: 0.05
+  # Two detections sharing one counterpart with X-ray positions closer than this are
+  # fragments of one extended source: both are flagged and excluded from the sample.
+  # Farther apart they are a collision, and the higher NWAY_dist_post wins.
+  split_source_max_sep_arcsec: 15.0
 
 labels:
   # split-normal log-flux error cap, dex; beyond this a flux is not a measurement
