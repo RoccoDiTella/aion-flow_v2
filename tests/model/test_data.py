@@ -11,30 +11,31 @@ import pytest
 import torch
 
 from aionflow_model.data import (
+    ALL_TOKEN_KEYS,
     MODALITIES,
     RATE_TARGETS,
     SCALAR_TARGETS,
+    TOKEN_SIZES,
     DataError,
     Split,
-    StagedDataset,
     Standardizer,
+    TokenDataset,
     loader,
     log_plug_in_rate,
 )
 
 BATCH = {
-    "targetid": torch.int64, "spectrum": torch.float32, "spectrum_ivar": torch.float32,
-    "image": torch.float32, "redshift": torch.float32, "wise": torch.float32,
-    "present": torch.bool, "y": torch.float32, "y_ok": torch.bool,
+    "targetid": torch.int64, "present": torch.bool, "y": torch.float32, "y_ok": torch.bool,
     "counts": torch.float64, "bkg": torch.float64, "expo": torch.float64,
     "rate_ok": torch.bool,
+    **{key: torch.int32 for key in ALL_TOKEN_KEYS},
 }
 
 
 # ----------------------------------------------------------------------------- the join
 
 def test_a_split_lines_its_labels_up_with_its_staged_rows(splits, staged):
-    work, _ = staged
+    _, work, _ = staged
     labels = pd.read_csv(work / "labels.csv").set_index("ero_detuid")
     manifest = pd.read_csv(work / "manifest.csv")
     manifest = manifest[manifest["in_sample"]].set_index("targetid")
@@ -72,7 +73,7 @@ def test_a_zero_count_band_stays_a_measurement(splits):
 
 
 def test_a_missing_or_mismatched_join_is_an_error(splits, staged, tmp_path):
-    work, staged_dir = staged
+    _, work, staged_dir = staged
     with pytest.raises(DataError, match="unknown split"):
         Split(staged_dir, work, "holdout")
     with pytest.raises(DataError, match="missing staged split"):
@@ -149,29 +150,48 @@ def test_the_standardizer_round_trips_through_a_file(standardizer, tmp_path):
 
 def test_a_batch_carries_the_whole_registry_with_the_contract_dtypes(splits, standardizer):
     split = splits["train"]
-    dataset = StagedDataset(split, standardizer)
+    dataset = TokenDataset(split, standardizer)
     batch = next(iter(loader(dataset, batch_size=len(dataset), shuffle=False)))
     assert set(batch) == set(BATCH)
     for key, dtype in BATCH.items():
         assert batch[key].dtype == dtype, key
     n = split.n
-    assert batch["spectrum"].shape == (n, split.nbin)
-    assert batch["image"].shape == (n, len(split.image_bands), split.image_size,
-                                    split.image_size)
-    assert batch["wise"].shape == (n, 3)
+    for key in ALL_TOKEN_KEYS:
+        assert batch[key].shape == (n, TOKEN_SIZES[key]), key
+    assert sum(TOKEN_SIZES.values()) == 853        # what AION reads for one source
     assert batch["y"].shape == (n, len(SCALAR_TARGETS))
     assert batch["counts"].shape == (n, len(RATE_TARGETS))
     assert np.array_equal(batch["targetid"].numpy(), split.targetid)
     assert np.array_equal(batch["y"].numpy(), split.standardized(standardizer).astype(np.float32))
     assert np.array_equal(batch["present"].numpy(), split.present)
+    with h5py.File(split.tokens_path, "r") as h:
+        assert np.array_equal(batch["targetid"].numpy(), h["targetid"][:])
+        for key in ALL_TOKEN_KEYS:
+            assert np.array_equal(batch[key].numpy(), h[key][:]), key
+    # the spectra and images are still reachable, for the tokenizer alone
     with h5py.File(split.path, "r") as h:
-        assert np.array_equal(batch["spectrum"].numpy(), h["spectra"][:])
-        assert np.array_equal(batch["image"].numpy(), h["image_flux"][:])
-        assert np.array_equal(split.wavelength, h["spectra_lambda"][:])
+        flux, ivar = split.spectra(0, n)
+        assert np.array_equal(flux.numpy(), h["spectra"][:])
+        assert np.array_equal(ivar.numpy(), h["spectra_ivar"][:])
+        assert np.array_equal(split.images(0, n).numpy(), h["image_flux"][:])
+
+
+def test_a_split_without_tokens_says_which_step_is_missing(splits, standardizer, staged,
+                                                           tmp_path):
+    _, work, staged_dir = staged
+    import shutil
+    for name in ("train.h5",):
+        shutil.copy(staged_dir / name, tmp_path / name)
+    for name in ("labels.csv", "manifest.csv"):
+        shutil.copy(work / name, tmp_path / name)
+    split = Split(tmp_path, tmp_path, "train")
+    with pytest.raises(DataError, match="run aionflow_model.tokenize"):
+        TokenDataset(split, standardizer)[0]
+    split.close()
 
 
 def test_shuffling_is_seeded_and_covers_every_row(splits, standardizer):
-    dataset = StagedDataset(splits["train"], standardizer)
+    dataset = TokenDataset(splits["train"], standardizer)
     order = [b["targetid"] for b in loader(dataset, 4, shuffle=True, seed=42)]
     again = [b["targetid"] for b in loader(dataset, 4, shuffle=True, seed=42)]
     other = [b["targetid"] for b in loader(dataset, 4, shuffle=True, seed=7)]

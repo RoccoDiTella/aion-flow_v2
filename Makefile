@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features
+.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features tokenize
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -55,3 +55,9 @@ validate:  ## step 7: check the staged files, split and labels; non-zero exit on
 
 line_features:  ## step 8: the baseline's four line fluxes on our own spectra -> work/line_features.csv
 	$(PY) -m aionflow_data.line_features --config $(CONFIG) $(if $(NPROC),--nproc $(NPROC),)
+
+# ---- model -----------------------------------------------------------------
+# Needs the [model] extra. Run `all` first; these read what it staged.
+
+tokenize:  ## run AION's frozen codecs once per split -> staged/tokens_{train,val,test}.h5 (DEVICE=cuda)
+	$(PY) -m aionflow_model.tokenize --config $(CONFIG) $(if $(DEVICE),--device $(DEVICE),)

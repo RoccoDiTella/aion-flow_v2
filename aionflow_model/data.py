@@ -18,17 +18,17 @@ Every batch carries the whole target registry regardless of which heads a run
 trains, so the batch contract does not depend on the recipe:
 
     targetid       int64   (B,)
-    spectrum       float32 (B, nbin)      spectrum_ivar float32 (B, nbin)
-    image          float32 (B, 4, S, S)
-    redshift       float32 (B,)           wise          float32 (B, 3)
+    tok_z          int32   (B, 1)         tok_spectrum_desi int32 (B, 273)
+    tok_image      int32   (B, 576)       tok_flux_w1..w3   int32 (B, 1)
     present        bool    (B, 4)         over MODALITIES
     y              float32 (B, 4)         standardized scalars, 0 where not usable
     y_ok           bool    (B, 4)
     counts, bkg, expo  float64 (B, 2)     the aperture triples
     rate_ok        bool    (B, 2)
 
-The wavelength grid is constant across rows and hangs off the split, not the
-batch.
+The spectra and images themselves never reach a batch: `tokenize.py` has already
+run AION's codecs over them. They stay reachable on the split, which is what
+that step reads.
 """
 
 from __future__ import annotations
@@ -42,14 +42,28 @@ import h5py
 import numpy as np
 import pandas as pd
 import torch
+from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
 from aionflow_data.labels import OUTPUT as LABELS_FILE
 from aionflow_data.manifest_split import MANIFEST, SPLITS
 from aionflow_data.stage import SPLIT_FILE
 
+TOKENS_FILE = "tokens_{split}.h5"
+
 MODALITIES = ("Z", "S", "I", "W")
 NET_COUNT_FLOOR = 0.5      # N - B floored at half a photon before a log or a sigma
+
+# What each modality contributes to AION's encoder, and how many tokens of it.
+TOKEN_KEYS: dict[str, tuple[tuple[str, int], ...]] = {
+    "Z": (("tok_z", 1),),
+    "S": (("tok_spectrum_desi", 273),),
+    "I": (("tok_image", 576),),
+    "W": (("tok_flux_w1", 1), ("tok_flux_w2", 1), ("tok_flux_w3", 1)),
+}
+ALL_TOKEN_KEYS = tuple(key for m in MODALITIES for key, _ in TOKEN_KEYS[m])
+TOKEN_SIZES = {key: n for m in MODALITIES for key, n in TOKEN_KEYS[m]}
+TOKENS_PER_SOURCE = sum(TOKEN_SIZES.values())
 
 
 class DataError(RuntimeError):
@@ -164,7 +178,8 @@ class Split:
         self.path = Path(staged) / SPLIT_FILE.format(split=name)
         if not self.path.is_file():
             raise DataError(f"missing staged split {self.path}")
-        self._files: dict[int, h5py.File] = {}
+        self._files: dict[tuple[str, int], h5py.File] = {}
+        self.tokens_path = Path(staged) / TOKENS_FILE.format(split=name)
         with h5py.File(self.path, "r") as h:
             self.targetid = h["targetid"][:].astype(np.int64)
             self.redshift = h["redshift"][:].astype(np.float64)
@@ -214,19 +229,28 @@ class Split:
             out[ok, i] = standardizer.encode(name, self.y_raw[ok, i])
         return out
 
-    def _handle(self) -> h5py.File:
+    def _handle(self, which: str = "inputs") -> h5py.File:
         """One open handle per process, so DataLoader workers do not share one."""
-        pid = os.getpid()
-        if pid not in self._files:
-            self._files[pid] = h5py.File(self.path, "r")
-        return self._files[pid]
+        path = self.path if which == "inputs" else self.tokens_path
+        key = (which, os.getpid())
+        if key not in self._files:
+            if not path.is_file():
+                raise DataError(f"missing {path}; run aionflow_model.tokenize"
+                                if which == "tokens" else f"missing {path}")
+            self._files[key] = h5py.File(path, "r")
+        return self._files[key]
 
-    def spectrum(self, row: int) -> tuple[np.ndarray, np.ndarray]:
+    def spectra(self, lo: int, hi: int) -> tuple[Tensor, Tensor]:
+        """Flux and inverse variance for rows [lo, hi), for the codecs."""
         h = self._handle()
-        return h["spectra"][row], h["spectra_ivar"][row]
+        return (torch.from_numpy(h["spectra"][lo:hi]), torch.from_numpy(h["spectra_ivar"][lo:hi]))
 
-    def image(self, row: int) -> np.ndarray:
-        return self._handle()["image_flux"][row]
+    def images(self, lo: int, hi: int) -> Tensor:
+        return torch.from_numpy(self._handle()["image_flux"][lo:hi])
+
+    def tokens(self, row: int) -> dict[str, np.ndarray]:
+        h = self._handle("tokens")
+        return {key: h[key][row] for key in ALL_TOKEN_KEYS}
 
     def close(self) -> None:
         for h in self._files.values():
@@ -255,8 +279,12 @@ def _index_unique(frame: pd.DataFrame, key: str, what: str) -> pd.DataFrame:
 
 # ----------------------------------------------------------------------------- batches
 
-class StagedDataset(Dataset):
-    """Rows of one split, standardized, ready to collate."""
+class TokenDataset(Dataset):
+    """Rows of one split as AION token ids and standardized targets.
+
+    Spectra and images do not appear: `aionflow_model.tokenize` has already run
+    the codecs over them, and training never reads them again.
+    """
 
     def __init__(self, split: Split, standardizer: Standardizer):
         self.split = split
@@ -267,14 +295,10 @@ class StagedDataset(Dataset):
 
     def __getitem__(self, row: int) -> dict:
         s = self.split
-        spectrum, ivar = s.spectrum(row)
-        return {
+        item = {key: torch.from_numpy(np.asarray(value, np.int32))
+                for key, value in s.tokens(row).items()}
+        item.update({
             "targetid": torch.tensor(s.targetid[row], dtype=torch.int64),
-            "spectrum": torch.from_numpy(np.asarray(spectrum, np.float32)),
-            "spectrum_ivar": torch.from_numpy(np.asarray(ivar, np.float32)),
-            "image": torch.from_numpy(np.asarray(s.image(row), np.float32)),
-            "redshift": torch.tensor(s.redshift[row], dtype=torch.float32),
-            "wise": torch.from_numpy(s.wise[row].astype(np.float32)),
             "present": torch.from_numpy(s.present[row].copy()),
             "y": torch.from_numpy(self.y[row].copy()),
             "y_ok": torch.from_numpy(s.y_ok[row].copy()),
@@ -282,10 +306,11 @@ class StagedDataset(Dataset):
             "bkg": torch.from_numpy(s.bkg[row].copy()),
             "expo": torch.from_numpy(s.expo[row].copy()),
             "rate_ok": torch.from_numpy(s.rate_ok[row].copy()),
-        }
+        })
+        return item
 
 
-def loader(dataset: StagedDataset, batch_size: int, *, shuffle: bool, workers: int = 0,
+def loader(dataset: TokenDataset, batch_size: int, *, shuffle: bool, workers: int = 0,
            seed: int | None = None) -> DataLoader:
     generator = None
     if shuffle:
