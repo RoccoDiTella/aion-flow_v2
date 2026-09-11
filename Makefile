@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures all fetch clean-raw crossmatch labels spectra cutouts manifest_split stage validate
+.PHONY: help test lint fixtures all fetch clean-raw crossmatch labels spectra cutouts manifest_split stage validate line_features
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -27,7 +27,7 @@ fixtures:  ## regenerate tests/fixtures (deterministic; commit the result)
 # Pass DRY=1 to a step that supports it to report without acting. Every step is
 # idempotent: the fetchers resume, the others recompute from their inputs.
 
-all: fetch crossmatch labels spectra cutouts manifest_split stage validate  ## run every step in order
+all: fetch crossmatch labels spectra cutouts manifest_split stage validate line_features  ## run every step in order
 
 fetch:  ## step 0: download the four catalogues into paths.raw (resume + checksums)
 	$(PY) -m aionflow_data.fetch_catalogs --config $(CONFIG) $(if $(DRY),--dry-run,)
@@ -55,3 +55,6 @@ stage:  ## step 6: inputs-only per-split HDF5 with row-aligned chunks -> staged/
 
 validate:  ## step 7: check the staged files, split and labels; non-zero exit on any failure
 	$(PY) -m aionflow_data.validate --config $(CONFIG)
+
+line_features:  ## step 8: the baseline's four line fluxes on our own spectra -> work/line_features.csv
+	$(PY) -m aionflow_data.line_features --config $(CONFIG) $(if $(NPROC),--nproc $(NPROC),)
