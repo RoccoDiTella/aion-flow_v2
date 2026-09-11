@@ -70,6 +70,8 @@ def test_sha256_and_md5_match_hashlib(tmp_path):
     path.write_bytes(blob)
     assert common.sha256(path) == hashlib.sha256(blob).hexdigest()
     assert common.md5(path) == hashlib.md5(blob).hexdigest()
+    assert common.file_digests(path) == {"md5": hashlib.md5(blob).hexdigest(),
+                                         "sha256": hashlib.sha256(blob).hexdigest()}
 
 
 # ----------------------------------------------------------------------------- FITS

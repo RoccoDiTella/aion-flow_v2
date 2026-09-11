@@ -77,6 +77,17 @@ def file_digest(path: str | os.PathLike, algorithm: str = "sha256", chunk: int =
     return h.hexdigest()
 
 
+def file_digests(path: str | os.PathLike, algorithms: tuple[str, ...] = ("md5", "sha256"),
+                 chunk: int = 1 << 20) -> dict[str, str]:
+    """Several digests of one file in a single pass."""
+    hashers = {a: hashlib.new(a) for a in algorithms}
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            for h in hashers.values():
+                h.update(block)
+    return {a: h.hexdigest() for a, h in hashers.items()}
+
+
 def sha256(path: str | os.PathLike) -> str:
     return file_digest(path, "sha256")
 
