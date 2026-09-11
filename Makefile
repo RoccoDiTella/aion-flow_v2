@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures fetch clean-raw crossmatch
+.PHONY: help test lint fixtures fetch clean-raw crossmatch labels
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -34,3 +34,6 @@ clean-raw:  ## delete paths.raw once the crossmatch and labels ledgers record it
 
 crossmatch:  ## step 1: NWAY x DESI 1" match with the selection rules -> work/crossmatch.parquet
 	$(PY) -m aionflow_data.crossmatch --config $(CONFIG)
+
+labels:  ## step 2: X-ray labels from the Main catalogue, host labels from CIGALE -> work/labels.csv
+	$(PY) -m aionflow_data.labels --config $(CONFIG)
