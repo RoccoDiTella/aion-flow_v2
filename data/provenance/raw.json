@@ -1,0 +1,59 @@
+{
+  "step": "raw",
+  "written_utc": "2026-09-11T12:35:55+00:00",
+  "config": {
+    "path": "/h/rditella/aion-flow_v2/config.yaml",
+    "sha256": "b8322c69ff562af78d867cdcf6969cdbc253e894621a9fd49eb219eced120293"
+  },
+  "inputs": {
+    "nway": {
+      "path": "/h/rditella/aion-flow_v2/data/raw/eRASSc3_Main_LS10_Public_27Jul2026.fits.gz",
+      "bytes": 1053710795,
+      "mtime_ns": 1789129163627338559,
+      "sha256": "32a7e85d6f5e309b153789f72e605c73c96fb8f920bfabc95211b5723f0b8a68",
+      "md5": "511a2f9a43853c45394ed11b5dce49aa",
+      "url": "https://erosita.mpe.mpg.de/dr2/AllSkySurveyData_dr2/Catalogues_dr2/RamosM_DR2/eRASSc3_Main_LS10_Public_27Jul2026.fits.gz",
+      "retrieved_utc": "2026-09-11T12:19:25+00:00",
+      "status": "downloaded",
+      "publisher_sha256_verified": null
+    },
+    "main": {
+      "path": "/h/rditella/aion-flow_v2/data/raw/eRASS3_Main_v1.3.fits",
+      "bytes": 2139595200,
+      "mtime_ns": 1789129244040621832,
+      "sha256": "4fe0a40f8d6cbd03ff51c5e8b5f665d7adfd04391ab4df99a6caa36053184059",
+      "md5": "94f07e21a80610983b985efb3c94c6e1",
+      "url": "https://erosita.mpe.mpg.de/dr2/AllSkySurveyData_dr2/Catalogues_dr2/RamosM_DR2/eRASS3_Main_v1.3.fits",
+      "retrieved_utc": "2026-09-11T12:20:47+00:00",
+      "status": "downloaded",
+      "publisher_sha256_verified": null
+    },
+    "desi_zcat": {
+      "path": "/h/rditella/aion-flow_v2/data/raw/zall-pix-iron.fits",
+      "bytes": 21347933760,
+      "mtime_ns": 1789129892935849239,
+      "sha256": "d6e3700a131499ff50c0561bdf0c5a11d9d5efd1b66f1f329a07b08d10c5802d",
+      "md5": "8130ed013199da69933bbbe3c1302115",
+      "url": "https://desidata.s3.amazonaws.com/dr1/spectro/redux/iron/zcatalog/v0/zall-pix-iron.fits",
+      "retrieved_utc": "2026-09-11T12:32:06+00:00",
+      "status": "downloaded",
+      "publisher_sha256_verified": true
+    },
+    "cigale": {
+      "path": "/h/rditella/aion-flow_v2/data/raw/IronPhysProp_v1.2.fits",
+      "bytes": 7322716800,
+      "mtime_ns": 1789130143663703689,
+      "sha256": "8752fe4e5ce357472fb22e38bc2c8a235efabf311e3e593520ced786eded2cc9",
+      "md5": "5c2449909e4ee739c56027db4a16e1d9",
+      "url": "https://desidata.s3.amazonaws.com/dr1/vac/dr1/cigale/iron/v1.2/IronPhysProp_v1.2.fits",
+      "retrieved_utc": "2026-09-11T12:35:55+00:00",
+      "status": "downloaded",
+      "publisher_sha256_verified": true
+    }
+  },
+  "counts": {
+    "files": 4
+  },
+  "filters": [],
+  "extra": {}
+}
