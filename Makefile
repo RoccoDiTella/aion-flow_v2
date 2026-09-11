@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures fetch clean-raw crossmatch labels spectra
+.PHONY: help test lint fixtures fetch clean-raw crossmatch labels spectra cutouts
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -40,3 +40,6 @@ labels:  ## step 2: X-ray labels from the Main catalogue, host labels from CIGAL
 
 spectra:  ## step 3: fetch DESI coadd spectra into shards and merge -> work/spectra/source.h5 (LIMIT_GROUPS=N for a smoke)
 	$(PY) -m aionflow_data.fetch_spectra --config $(CONFIG) $(if $(LIMIT_GROUPS),--limit-groups $(LIMIT_GROUPS),)
+
+cutouts:  ## step 4: fetch Legacy Survey cutouts, one FITS per target -> work/cutouts/ (LIMIT=N for a smoke; ~8 days in full)
+	$(PY) -m aionflow_data.fetch_cutouts --config $(CONFIG) $(if $(LIMIT),--limit $(LIMIT),)
