@@ -1,0 +1,93 @@
+# aion-flow_v2 pipeline configuration.
+# Every constant here is the paper's. Relative paths resolve against this file.
+
+inputs:
+  # SRG/eROSITA-DE DR2, NWAY counterparts to Legacy Survey DR10 (Salvato et al.).
+  nway:
+    file: eRASSc3_Main_LS10_Public_27Jul2026.fits.gz
+    url: https://erosita.mpe.mpg.de/dr2/AllSkySurveyData_dr2/Catalogues_dr2/RamosM_DR2/eRASSc3_Main_LS10_Public_27Jul2026.fits.gz
+    bytes: 1053710795
+    md5: 511a2f9a43853c45394ed11b5dce49aa
+  # SRG/eROSITA-DE DR2, eRASS:3 Main catalogue (Ramos-Ceja et al. 2026).
+  main:
+    file: eRASS3_Main_v1.3.fits
+    url: https://erosita.mpe.mpg.de/dr2/AllSkySurveyData_dr2/Catalogues_dr2/RamosM_DR2/eRASS3_Main_v1.3.fits
+    bytes: 2139595200
+    md5: 94f07e21a80610983b985efb3c94c6e1
+  # DESI DR1 (iron) redshift catalogue, one row per (target, survey, program) coadd.
+  desi_zcat:
+    file: zall-pix-iron.fits
+    url: https://desidata.s3.amazonaws.com/dr1/spectro/redux/iron/zcatalog/v0/zall-pix-iron.fits
+    bytes: 21347933760
+    md5: 8130ed013199da69933bbbe3c1302115
+    checksum_sidecar_url: https://desidata.s3.amazonaws.com/dr1/spectro/redux/iron/zcatalog/v0/redux_iron_zcatalog_v0.sha256sum
+  # DESI DR1 CIGALE physical-properties VAC (Siudek et al. 2024).
+  cigale:
+    file: IronPhysProp_v1.2.fits
+    url: https://desidata.s3.amazonaws.com/dr1/vac/dr1/cigale/iron/v1.2/IronPhysProp_v1.2.fits
+    bytes: 7322716800
+    sha256: 8752fe4e5ce357472fb22e38bc2c8a235efabf311e3e593520ced786eded2cc9
+    checksum_sidecar_url: https://desidata.s3.amazonaws.com/dr1/vac/dr1/cigale/iron/v1.2/dr1_vac_dr1_cigale_iron_v1.2.sha256sum
+
+archives:
+  # DESI DR1 healpix coadds; {group} is healpix // 100.
+  desi_coadd_url: "https://data.desi.lbl.gov/public/dr1/spectro/redux/iron/healpix/{survey}/{program}/{group}/{pix}/coadd-{survey}-{program}-{pix}.fits"
+  # Legacy Survey DR10 cutout service.
+  ls_cutout_url: "https://www.legacysurvey.org/viewer/fits-cutout?ra={ra:.6f}&dec={dec:.6f}&layer={layer}&pixscale={pixscale}&size={size}&bands={bands}"
+
+crossmatch:
+  radius_arcsec: 1.0
+  # Legacy Survey releases that DESI main-survey TARGETIDs encode (bits 42-57).
+  main_survey_releases: [9010, 9011, 9012]
+  # Rows whose NWAY_threshold6 is absent are kept at this flat p_any instead.
+  uncalibrated_p_any_min: 0.05
+
+labels:
+  # split-normal log-flux error cap, dex; beyond this a flux is not a measurement
+  sig_cap_dex: 1.5
+  # catalogue inclusion threshold; a label gate for the broad-band heads, not a sample cut
+  det_like_min: 6.0
+  # no luminosity below this redshift
+  z_floor: 0.001
+  cosmology: Planck18
+  # CIGALE best/Bayesian ratio flags outside this window mean a broad or multimodal PDF
+  cigale_flag_window: [0.2, 5.0]
+  # CIGALE labels with a larger error are unusable
+  cigale_max_sigma_dex: 3.0
+
+spectra:
+  lam0_angstrom: 3600.0
+  dlam_angstrom: 0.8
+  nbin: 7781
+  workers: 6
+  timeout_s: 120.0
+
+cutouts:
+  layer: ls-dr10
+  pixscale: 0.262
+  size: 160
+  bands: griz
+  sleep_s: 0.4
+  backoff_s: 5.0
+  max_backoff_s: 120.0
+  timeout_s: 120.0
+  min_bytes: 10000
+
+split:
+  fractions: [0.8, 0.1, 0.1]
+  tolerance: 0.01
+  hash:
+    algorithm: blake2b
+    digest_size: 8
+    salt: aion-flow-v2/2026-09-10
+
+stage:
+  chunk_target_bytes: 262144
+  spectra_compression: gzip
+  spectra_compression_level: 4
+
+paths:
+  raw: data/raw
+  work: data/work
+  staged: data/staged
+  provenance: data/provenance

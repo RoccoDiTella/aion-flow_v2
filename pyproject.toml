@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aionflow-data"
+version = "0.1.0"
+description = "Data pipeline for the AION X-ray paper: eROSITA DR2 x DESI DR1 x Legacy Survey DR10 inputs, labels and split."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "pyarrow>=15",
+    "astropy>=6.1",
+    "h5py>=3.11",
+    "fsspec>=2024.6",
+    "aiohttp>=3.9",
+    "tqdm>=4.66",
+    "pyyaml>=6",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aionflow_data*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

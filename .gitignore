@@ -1,0 +1,29 @@
+# environments and caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# pipeline data: everything under data/ except the committed ledgers
+data/raw/
+data/work/
+data/staged/
+
+# bulk astronomical files anywhere, except the committed test fixtures
+*.fits
+*.fits.gz
+*.h5
+*.hdf5
+*.npz
+*.parquet
+!tests/fixtures/**/*.fits
+!tests/fixtures/**/*.npz
+
+# local scratch
+*.log
+nohup.out
+*.pdf
