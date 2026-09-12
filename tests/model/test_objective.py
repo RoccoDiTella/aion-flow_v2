@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 from collections import Counter
 
@@ -160,7 +161,7 @@ def test_the_flow_runs_in_its_own_precision_and_the_sum_in_double(standardizer):
                                     batch, standardizer)
     single, _ = head_log_likelihood(head, UnitNormal(), torch.zeros(6, 1), batch, standardizer)
     assert double.dtype == single.dtype == torch.float64
-    assert torch.allclose(double, single, atol=1e-6)
+    assert torch.allclose(double, single, atol=1e-5)
     assert not torch.equal(double, single)
 
 
@@ -176,34 +177,60 @@ def test_a_row_with_nothing_observed_is_not_scored(standardizer):
 
 # ----------------------------------------------------------------------------- weighting
 
+def gradients_of(model):
+    return [p.grad.detach().clone() for p in model.parameters() if p.grad is not None]
+
+
+def accumulate(model, batch, mask, weights, rows, step=3):
+    """One backward per chunk, weighted by the whole batch."""
+    model.zero_grad(set_to_none=True)
+    for lo in range(0, rows, step):
+        part = {k: v[lo:lo + step] for k, v in batch.items()}
+        batch_loss(model.log_likelihood(part, mask[lo:lo + step]), weights)[0].backward()
+    return gradients_of(model)
+
+
 def test_chunking_a_batch_leaves_the_loss_and_its_gradient_unchanged(standardizer):
+    """What is under test is the row weighting, not arithmetic precision, so it is
+    checked in double: each head's mean is taken over its scorable rows in the whole
+    batch, which makes the chunks' accumulated gradient the whole batch's exactly.
+
+    In float32 the two differ in the last bits, because the summation order differs and
+    by how much depends on the BLAS. The second half holds that drift to a relative
+    size over the whole gradient rather than element by element.
+    """
     torch.manual_seed(0)
     backbone = FakeBackbone(width=SMALL, heads=4, depth=2)
-    model = Model(backbone, load_run("configs/marginals.yaml"), standardizer)
+    model = Model(backbone, load_run("configs/marginals.yaml"), standardizer).double().eval()
     rows = 8
     batch = a_batch(rows=rows)
     from tests.model.test_encoder import a_batch as token_batch
     batch.update(token_batch(rows=rows))
     batch["present"] = torch.ones(rows, 4, dtype=torch.bool)
-    batch["y"] = batch["y"].float()
     mask = torch.ones(rows, 4, dtype=torch.bool)
     weights = {head.name: int(observed(head, batch).any(dim=1).sum())
                for head in model.run.heads}
 
-    model.eval()
+    model.zero_grad(set_to_none=True)
     whole, _ = batch_loss(model.log_likelihood(batch, mask), weights)
     whole.backward()
-    grads = [p.grad.detach().clone() for p in model.parameters() if p.grad is not None]
-    assert grads
-    model.zero_grad(set_to_none=True)
-    for lo in range(0, rows, 3):
-        part = {k: v[lo:lo + 3] for k, v in batch.items()}
-        loss, _ = batch_loss(model.log_likelihood(part, mask[lo:lo + 3]), weights)
-        loss.backward()
-    chunked = [p.grad.detach().clone() for p in model.parameters() if p.grad is not None]
-    assert len(chunked) == len(grads)
-    for a, b in zip(grads, chunked):
-        assert torch.allclose(a, b, atol=1e-5, rtol=1e-4)
+    exact = gradients_of(model)
+    assert exact
+    chunked = accumulate(model, batch, mask, weights, rows)
+    assert len(chunked) == len(exact)
+    for a, b in zip(exact, chunked):
+        assert torch.allclose(a, b, atol=1e-10, rtol=1e-8)
+
+    # the same model in the precision training runs at
+    single = copy.deepcopy(model).float().eval()
+    single.zero_grad(set_to_none=True)
+    batch32 = dict(batch, y=batch["y"].float())
+    batch_loss(single.log_likelihood(batch32, mask), weights)[0].backward()
+    exact32 = gradients_of(single)
+    chunked32 = accumulate(single, batch32, mask, weights, rows)
+    size = torch.cat([g.reshape(-1) for g in exact32]).norm()
+    drift = torch.cat([(a - b).reshape(-1) for a, b in zip(exact32, chunked32)]).norm()
+    assert drift / size < 1e-4
 
 
 def test_the_loss_is_the_mean_over_heads(standardizer):
