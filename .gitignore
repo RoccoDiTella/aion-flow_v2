@@ -7,12 +7,19 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.coverage
+.coverage.*
 
 # pipeline data: everything under data/ except the committed ledgers
 data/raw/
 data/work/
 data/staged/
 data/fixture_run/
+
+# model outputs: checkpoints, scored runs, analyses and figures
+runs/
+results/
+figures/
 
 # bulk astronomical files anywhere, except the committed test fixtures
 *.fits

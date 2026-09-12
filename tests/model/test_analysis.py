@@ -212,6 +212,26 @@ HARDNESS_COLUMNS = ("hardness.csv",
                     ["targetid", "spectype", "redshift", "hr_median", "hr_lo", "hr_hi"])
 
 
+def test_the_draws_are_reduced_chunk_by_chunk_and_never_held_whole(analysed, splits):
+    """32,768 draws per source over four dimensions is 12.5 GB for a real test split,
+    so every caller reduces a chunk to one number per source before the next arrives."""
+    import numpy as np
+
+    from aionflow_model.analysis import draw_batches, load_model
+    from aionflow_model.train import CHECKPOINT
+
+    root, _ = analysed
+    assert (root / "joint4" / CHECKPOINT).is_file()
+    model = load_model(root / "joint4", a_backbone(), "cpu")
+    from aionflow_model.objective import SUBSETS
+    chunks_seen = list(draw_batches(model, splits["test"], model.run.heads[0].name,
+                                    SUBSETS[-1], "cpu", chunk=2, draws=8))
+    assert len(chunks_seen) > 1                       # it really is chunked
+    assert all(c.shape[1:] == (8, 4) for c in chunks_seen)
+    assert sum(c.shape[0] for c in chunks_seen) == splits["test"].n
+    assert not isinstance(chunks_seen, np.ndarray)
+
+
 def test_at_least_one_run_directory_is_required():
     from aionflow_model.analysis import main
     assert main(["--out", "x"]) == 1

@@ -257,26 +257,31 @@ def ssfr_comparison(model: Model, split: Split, device: str, chunk: int) -> dict
 
 
 @torch.no_grad()
-def draw_joint(model: Model, split: Split, head_name: str, mask_row: torch.Tensor,
-               device: str, chunk: int, draws: int) -> np.ndarray:
-    """Posterior draws of one head for every row, (n, draws, D), in standardized units."""
-    out = []
+def draw_batches(model: Model, split: Split, head_name: str, mask_row: torch.Tensor,
+                 device: str, chunk: int, draws: int):
+    """Posterior draws of one head, a chunk of rows at a time, in standardized units.
+
+    A generator rather than an array on purpose: the paper draws 32,768 samples per
+    source, and a whole test split's worth over four dimensions is 12.5 GB. Every
+    caller here reduces each chunk to one number per source, so nothing that large
+    ever exists.
+    """
     for batch in loader(TokenDataset(split, model.standardizer), 256, shuffle=False):
         batch = to_device(batch, device)
         for part in chunks(batch, chunk):
             rows = part["y"].shape[0]
             contexts = model.contexts(part, mask_row.to(device).expand(rows, -1))
-            out.append(model.flows[head_name].sample(contexts[head_name],
-                                                     draws).double().cpu().numpy())
-    return np.concatenate(out)
+            yield model.flows[head_name].sample(contexts[head_name],
+                                                draws).double().cpu().numpy()
 
 
 def within_object(model: Model, split: Split, device: str, chunk: int, draws: int,
                   mask_row: torch.Tensor, log=print) -> tuple[np.ndarray, dict]:
     """rho per source, and the fractions Section 3.3 quotes."""
     head = model.run.heads[0]
-    sample = draw_joint(model, split, head.name, mask_row, device, chunk, draws)
-    rho = rho_from_draws(sample, head.targets, model.standardizer)
+    rho = np.concatenate([rho_from_draws(sample, head.targets, model.standardizer)
+                          for sample in draw_batches(model, split, head.name, mask_row,
+                                                     device, chunk, draws)])
     galaxy = split.spectype == "GALAXY"
     quasar = split.spectype == "QSO"
     nearby = galaxy & (split.redshift < NEARBY)
@@ -295,6 +300,22 @@ def within_object(model: Model, split: Split, device: str, chunk: int, draws: in
     return rho, {"galaxies": share(galaxy), "nearby_galaxies": share(nearby),
                  "quasars": share(quasar), "all": share(np.ones_like(finite)),
                  "draws": draws, "nearby_below_z": NEARBY}
+
+
+def hardness_posterior(model: Model, split: Split, device: str, chunk: int,
+                       draws: int) -> pd.DataFrame:
+    """A hardness-ratio posterior summary per source, reduced chunk by chunk."""
+    head = model.run.heads[0]
+    pieces = []
+    for sample in draw_batches(model, split, head.name, SUBSETS[-1], device, chunk, draws):
+        natural = decode_draws(sample, head.targets, model.standardizer)
+        hr = hardness_ratio(np.stack([natural["rate_p2"], natural["rate_p3"]], axis=-1))
+        pieces.append(np.stack([np.median(hr, 1), np.quantile(hr, 0.16, axis=1),
+                                np.quantile(hr, 0.84, axis=1)], axis=1))
+    summary = np.concatenate(pieces)
+    return pd.DataFrame({"targetid": split.targetid, "spectype": split.spectype,
+                         "redshift": split.redshift, "hr_median": summary[:, 0],
+                         "hr_lo": summary[:, 1], "hr_hi": summary[:, 2]})
 
 
 def run(cfg: dict, out: str | Path, *, marginals=None, rates=None, joint4=None,
@@ -317,16 +338,9 @@ def run(cfg: dict, out: str | Path, *, marginals=None, rates=None, joint4=None,
                                               test, device, chunk)
         if rates:
             model = load_model(Path(rates), backbone, device)
-            sample = draw_joint(model, test, model.run.heads[0].name, SUBSETS[-1], device,
-                                chunk, min(draws, 4096))
-            natural = decode_draws(sample, model.run.heads[0].targets, model.standardizer)
-            hr = hardness_ratio(np.stack([natural["rate_p2"], natural["rate_p3"]], -1))
-            pd.DataFrame({"targetid": test.targetid, "spectype": test.spectype,
-                          "redshift": test.redshift, "hr_median": np.median(hr, 1),
-                          "hr_lo": np.quantile(hr, 0.16, axis=1),
-                          "hr_hi": np.quantile(hr, 0.84, axis=1)}).to_csv(out / HARDNESS,
-                                                                          index=False)
-            results["hardness"] = {"n": int(test.n), "draws": int(sample.shape[1])}
+            hardness_posterior(model, test, device, chunk, draws).to_csv(out / HARDNESS,
+                                                                        index=False)
+            results["hardness"] = {"n": int(test.n), "draws": int(draws)}
         if joint4:
             model = load_model(Path(joint4), backbone, device)
             rho, summary = within_object(model, test, device, chunk, draws, SUBSETS[-1],
