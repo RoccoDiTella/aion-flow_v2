@@ -1,0 +1,5 @@
+# Appendix B's pooling comparison and random-encoder control: two scalar heads.
+name: pooling
+heads:
+  flux: [flux]
+  lx: [lx]

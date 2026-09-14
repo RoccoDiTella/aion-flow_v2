@@ -119,6 +119,25 @@ def readout(width: int = WIDTH, hidden: int = HIDDEN, context: int = CONTEXT,
 
 # ----------------------------------------------------------------------------- the probe
 
+def token_inputs(batch: dict, mask: Tensor) -> tuple[dict, dict, int]:
+    """Token ids, the per-modality mask, and how many tokens the batch needs.
+
+    Hiding a modality is the encoder's own token mask, so a hidden modality
+    contributes no key. Appendix B's pooling arms read the same tokens, which is
+    why this is a function and not a method.
+    """
+    if not bool(mask.any(dim=1).all()):
+        raise EncoderError("a source was given no modality to condition on")
+    tokens, hidden, visible = {}, {}, torch.zeros(mask.shape[0], dtype=torch.int64,
+                                                  device=mask.device)
+    for m, modality in enumerate(MODALITIES):
+        for key, _ in TOKEN_KEYS[modality]:
+            tokens[key] = batch[key]
+            hidden[key] = (~mask[:, m])[:, None].expand(-1, TOKEN_SIZES[key])
+            visible = visible + mask[:, m].long() * TOKEN_SIZES[key]
+    return tokens, hidden, int(visible.max())
+
+
 def backbone_width(backbone) -> int:
     """The residual width the CLS has to share with the data tokens."""
     norm = getattr(backbone, "encoder_norm", None)
@@ -147,17 +166,7 @@ class Probe(nn.Module):
         return self
 
     def inputs(self, batch: dict, mask: Tensor) -> tuple[dict, dict, int]:
-        """Token ids, the per-modality mask, and how many tokens the batch needs."""
-        if not bool(mask.any(dim=1).all()):
-            raise EncoderError("a source was given no modality to condition on")
-        tokens, hidden, visible = {}, {}, torch.zeros(mask.shape[0], dtype=torch.int64,
-                                                      device=mask.device)
-        for m, modality in enumerate(MODALITIES):
-            for key, _ in TOKEN_KEYS[modality]:
-                tokens[key] = batch[key]
-                hidden[key] = (~mask[:, m])[:, None].expand(-1, TOKEN_SIZES[key])
-                visible = visible + mask[:, m].long() * TOKEN_SIZES[key]
-        return tokens, hidden, int(visible.max())
+        return token_inputs(batch, mask)
 
     def context(self, batch: dict, mask: Tensor) -> Tensor:
         """The final CLS state, after the encoder's output LayerNorm."""

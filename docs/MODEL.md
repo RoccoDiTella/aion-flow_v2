@@ -20,6 +20,7 @@ the paper; the tests quote the sentence each piece implements.
 | `baseline.py` | the emission-line flow |
 | `analysis.py` | sSFR, hardness ratios, the within-object correlation, the bootstrap |
 | `figures.py` | Figures 1 to 3 and Table 1 |
+| `ablations.py` | Appendix B only: the pooling arms and the random-encoder control |
 
 Stand-in encoders and codecs live in `tests/model/`, never in the package.
 
@@ -37,6 +38,7 @@ make evaluate OUT=runs/baseline BASELINE=1
 make analysis DEVICE=cuda
 python -m aionflow_model.figures --analysis results --out figures \
     --marginals runs/marginals --baseline runs/baseline
+make ablations DEVICE=cuda                     # Appendix B, not one of the reported runs
 ```
 
 Tokenizing is a step of its own because AION's codecs cost about half a second
@@ -89,7 +91,30 @@ a Poisson factor, or integrated on the fixed prior grid. A source with nothing
 observed in a head is not scored by it, because integrating out every dimension
 gives log 1 whatever the model says.
 
-## 5. Choices the paper does not state
+## 5. Appendix B
+
+`ablations.py` is the only module the main path never imports, because the package
+trains one architecture and these arms exist to say what is lost by reading the
+encoder differently. It holds the two comparisons that test a claim:
+
+- the **pooling comparison** - the CLS read against a bare attentive probe (one
+  learned query, single-head cross-attention over the final tokens, a
+  per-modality affine on the tokens and a presence embedding on the query) and a
+  masked mean over the same tokens, all three sharing the readouts, flows, split,
+  schedule, seed and sampled modality dropout, on the two heads flux and log LX;
+- the **random-encoder control** - the same mean pool and heads on a frozen
+  encoder of identical architecture that was never pretrained, with all four
+  modalities always present.
+
+Trained parameters come to 6,795,888, 5,625,456 and 3,256,176, against the
+paper's 6.8M, 5.6M and 3.3M. That arithmetic is what pins "bare": a
+feed-forward or a second layer overshoots, and dropping the output projection
+lands at 5.0M.
+
+The four-token and cosine-schedule grid of the same appendix is a hyperparameter
+search rather than an architecture claim and is deliberately absent.
+
+## 6. Choices the paper does not state
 
 Each is written into the run directory, so a reader can see what was done.
 
@@ -108,7 +133,7 @@ Each is written into the run directory, so a reader can see what was done.
 | sSFR integral | a Riemann sum over the stellar-mass axis to eight standardized units, wider than the Poisson quadrature's five because truncating at five costs the tails of log sSFR |
 | KDE prior | fitted on every complete training row, at Scott's bandwidth with the full covariance, matching `scipy.stats.gaussian_kde` |
 
-## 6. Against the paper
+## 7. Against the paper
 
 Filled in after the three runs; the paper's numbers will move before submission,
 so this table is a comparison, not a target.
@@ -128,3 +153,4 @@ so this table is a comparison, not a target.
 | rho negative below z = 0.7 | 85% | *pending* |
 | 68 / 90 / 95% coverage | 66.2-68.0 / 88.5-89.7 / 93.9-94.8% | *pending* |
 | trained parameters, the three runs | 11.7M / 5.2M / 5.3M | 11,731,536 / 5,219,184 / 5,317,856 |
+| trained parameters, Appendix B's arms | 6.8M / 5.6M / 3.3M | 6,795,888 / 5,625,456 / 3,256,176 |

@@ -9,7 +9,7 @@ CONFIG ?= config.yaml
 PY ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features tokenize train evaluate baseline analysis figures
+.PHONY: help test lint fixtures all fetch crossmatch labels spectra cutouts manifest_split stage validate line_features tokenize train evaluate baseline analysis figures ablations
 
 help:  ## list targets
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -83,3 +83,13 @@ analysis:  ## sSFR, hardness ratios, the within-object correlation and the boots
 figures:  ## Figures 1 to 3 and Table 1 from results/ into figures/
 	$(PY) -m aionflow_model.figures --analysis results --out figures \
 		--marginals runs/marginals --baseline runs/baseline
+
+ablations:  ## Appendix B only: the pooling comparison and the random-encoder control
+	$(PY) -m aionflow_model.ablations --config $(CONFIG) --arm cls  --out runs/pool-cls \
+		$(if $(DEVICE),--device $(DEVICE),)
+	$(PY) -m aionflow_model.ablations --config $(CONFIG) --arm attentive --out runs/pool-attentive \
+		$(if $(DEVICE),--device $(DEVICE),)
+	$(PY) -m aionflow_model.ablations --config $(CONFIG) --arm mean --out runs/pool-mean \
+		$(if $(DEVICE),--device $(DEVICE),)
+	$(PY) -m aionflow_model.ablations --config $(CONFIG) --arm mean --random-encoder \
+		--out runs/pool-random $(if $(DEVICE),--device $(DEVICE),)
