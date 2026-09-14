@@ -63,6 +63,12 @@ DESI_COLUMNS = {
 OUTPUT_COLUMNS = (["targetid"] + [c for c in NWAY_COLUMNS.values() if c != "nway_match_flag"]
                   + list(DESI_COLUMNS.values()) + ["sep_arcsec", "split_source"])
 
+# We neither train nor predict on stars, so they leave the pipeline here rather than
+# being carried through labels, spectra and cutouts to be filtered out at the end. A
+# Galactic star's redshift is real but is not a distance, so its X-ray luminosity is
+# meaningless; dropping them early also saves fetching cutouts nothing ever reads.
+EXCLUDED_SPECTYPES = ("STAR",)
+
 # desitarget.targetmask.encode_targetid: objid bits 0-21, brickid 22-41, release 42-57
 OBJID_BITS, BRICKID_BITS, RELEASE_BITS = 22, 20, 16
 
@@ -273,6 +279,9 @@ def run(cfg: dict, log=print) -> pd.DataFrame:
     led.apply("nway_matched_within_radius", matched)
     # `frame` is in NWAY row order restricted to matched rows, so the ledger masks below
     # index it directly
+
+    stellar = frame["spectype"].isin(EXCLUDED_SPECTYPES).to_numpy()
+    frame = frame[led.apply("spectype_not_stellar", ~stellar)].reset_index(drop=True)
 
     keep, rel_stats = reliability_mask(frame, float(cm["uncalibrated_p_any_min"]))
     frame = frame[led.apply("nway_p_any_reliability", keep)].reset_index(drop=True)

@@ -106,13 +106,23 @@ def test_fluxes_and_luminosity_against_the_catalogue(run, main_table, planted):
     assert not any(c.endswith(("_p1", "_p4")) for c in frame.columns)
 
 
-def test_luminosity_is_missing_at_nonpositive_redshift(run, planted):
+def test_luminosity_needs_a_cosmological_redshift(run, planted):
+    """The redshift has to be a distance before it can be one.
+
+    Stars are gone by now, dropped at the crossmatch, so this gate is the safety net
+    for anything else whose redshift is not cosmological: a misclassified object, or
+    one with no usable redshift at all. It is a separate question from redshift
+    quality, which is why ZWARN cannot stand in for it.
+    """
     _, frame, ledger = run
-    tid = planted["scenarios"]["z_nonpositive"]["targetid"]
-    r = _by_tid(frame, tid)
-    assert np.isnan(r["log_lx"]) and np.isfinite(r["log_flux_1"])
-    assert ledger["extra"]["xray"]["log_lx"]["z_le_0"] == 1
-    assert ledger["counts"]["log_lx_finite"] == len(frame) - 1
+    assert not (frame["spectype"] == "STAR").any()
+    row = _by_tid(frame, planted["scenarios"]["z_nonpositive"]["targetid"])
+    assert np.isfinite(row["log_flux_1"])                    # the flux is fine
+    assert np.isnan(row["log_lx"])                           # the luminosity is not
+    below = np.isfinite(frame["z"]) & (frame["z"] < 0.001)
+    assert int(below.sum()) >= 1
+    assert frame.loc[below, "log_lx"].isna().all()
+    assert ledger["extra"]["xray"]["log_lx"]["z_below_0.001"] == int(below.sum())
 
 
 def test_counts_integrity(run, main_table, planted):
@@ -196,8 +206,7 @@ def test_cigale_gates_by_construction(run, planted):
     assert c["broad_mass_pdf"] == 1 and c["broad_sfr_pdf"] == 1
     assert c["log_sfr"]["removed_by_max_sigma"] == 1
     assert c["logmstar_cigale"]["removed_by_max_sigma"] == 0
-    stars = frame[frame["spectype"] == "STAR"]
-    assert len(stars) == 2 and stars["logmstar_cigale"].isna().all()
+    assert frame["spectype"].isin(("QSO", "GALAXY")).all()   # stars left at the crossmatch
     assert ledger["counts"]["log_sfr_finite"] == int(np.isfinite(frame["log_sfr"]).sum())
 
 

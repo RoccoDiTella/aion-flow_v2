@@ -7,7 +7,9 @@ miss is an error) and to the CIGALE VAC on TARGETID (a left join; a miss is a
 missing label). Per X-ray band (1 = 0.2-2.3, P2 = 0.5-1.0, P3 = 1.0-2.0 keV):
 log10 flux with split-normal errors in dex, the detection likelihood, and the
 aperture triple (N counts, B background, t exposure) behind the Poisson heads.
-The broad-band luminosity uses Planck18 at z > 0.
+The broad-band luminosity uses Planck18 at z >= `labels.z_floor`; below that the
+redshift is not cosmological (a Galactic star has a good redshift of order 1e-5
+and ZWARN == 0) and the luminosity would be meaningless.
 
 Counts integrity: APE_CTS is int16 in the published catalogue and wraps on the
 brightest sources; a negative value is not invertible, so the whole triple for
@@ -95,8 +97,18 @@ def log_with_asym_errors(flux, lowerr, uperr, cap_dex: float):
     return out, slo, shi
 
 
-def log_luminosity(log_flux, z, cosmology: str = "Planck18") -> tuple[np.ndarray, int]:
-    """log10 L from log10 flux (erg s-1 cm-2) and redshift; NaN at z <= 0."""
+def log_luminosity(log_flux, z, cosmology: str = "Planck18",
+                   z_floor: float = 0.001) -> tuple[np.ndarray, int]:
+    """log10 L from log10 flux (erg s-1 cm-2) and redshift; NaN below `z_floor`.
+
+    The floor is not a guard against division by zero, it is the statement that the
+    redshift is cosmological. A Galactic star sits at z of order 1e-5 to 1e-4 from
+    its peculiar velocity alone, with a perfectly good redshift and ZWARN == 0, so
+    no redshift-quality flag rejects it; pushed through a luminosity distance it
+    becomes an object many sigma below the sample and drags the training
+    standardizer with it. z_floor of 0.001 is about 4 Mpc, which separates the
+    Galaxy from anything this survey calls a source.
+    """
     import astropy.units as u
     from astropy import cosmology as cosmo
 
@@ -104,11 +116,11 @@ def log_luminosity(log_flux, z, cosmology: str = "Planck18") -> tuple[np.ndarray
     z = np.asarray(z, np.float64)
     log_flux = np.asarray(log_flux, np.float64)
     out = np.full(z.shape, np.nan)
-    ok = np.isfinite(z) & (z > 0) & np.isfinite(log_flux)
+    ok = np.isfinite(z) & (z >= z_floor) & np.isfinite(log_flux)
     if ok.any():
         dl = cosmology_obj.luminosity_distance(z[ok]).to(u.cm).value
         out[ok] = log_flux[ok] + np.log10(4.0 * np.pi * dl ** 2)
-    return out, int((np.isfinite(z) & (z <= 0)).sum())
+    return out, int((np.isfinite(z) & (z < z_floor)).sum())
 
 
 # ----------------------------------------------------------------------------- X-ray
@@ -179,11 +191,13 @@ def xray_labels(main_path: Path, frame: pd.DataFrame, cfg_labels: dict,
         log(f"[xray] band {ours:>2}: {stats[ours]['flux_measured']:,} fluxes measured, "
             f"{stats[ours]['ape_cts_wrapped']} wrapped counts, "
             f"{stats[ours]['ape_bkg_negative_clipped']} negative backgrounds clipped")
+    z_floor = float(cfg_labels["z_floor"])
     out["log_lx"], n_bad_z = log_luminosity(out["log_flux_1"], frame["z"].to_numpy(),
-                                            cfg_labels.get("cosmology", "Planck18"))
-    stats["log_lx"] = {"finite": int(np.isfinite(out["log_lx"]).sum()), "z_le_0": n_bad_z}
+                                            cfg_labels.get("cosmology", "Planck18"), z_floor)
+    stats["log_lx"] = {"finite": int(np.isfinite(out["log_lx"]).sum()),
+                       f"z_below_{z_floor:g}": n_bad_z}
     log(f"[xray] log_lx defined for {stats['log_lx']['finite']:,} rows "
-        f"({n_bad_z} with z <= 0)")
+        f"({n_bad_z} below z = {z_floor:g}, not cosmological)")
     return pd.DataFrame(out), stats
 
 

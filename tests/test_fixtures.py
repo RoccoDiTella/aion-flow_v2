@@ -179,7 +179,10 @@ def test_expected_counts_are_self_consistent(planted):
     assert e["sample_rows"] == sum(e["sample_census"].values()) == len(e["sample_targetids"])
     assert len(e["split_source_detuids"]) == 2
     # two split-source rows, one row without a spectrum, one without a cutout
+    # stars never reach the crossmatch at all; of what does, two are split-source rows,
+    # one has no spectrum and one has no cutout
     assert e["sample_rows"] == e["crossmatch_rows"] - 2 - 1 - 1
+    assert "STAR" not in e["crossmatch_census"] and "STAR" not in e["sample_census"]
 
 
 def test_fixture_config_loads_and_describes_the_files(fx_cfg):

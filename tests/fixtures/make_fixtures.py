@@ -26,6 +26,8 @@ import numpy as np
 import yaml
 from astropy.io import fits
 
+from aionflow_data.crossmatch import EXCLUDED_SPECTYPES
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SEED = 20260910
@@ -274,6 +276,13 @@ class Builder:
 
     def expect(self, nway_row: dict, targetid: int, spectype: str, *, split_source=False,
                has_spectrum=True, has_cutout=True) -> None:
+        """Record what the crossmatch should emit for this source.
+
+        Stars leave at the crossmatch, so they are planted in the inputs (to prove the
+        filter fires) but never appear in what we expect out of it.
+        """
+        if spectype in EXCLUDED_SPECTYPES:
+            return
         self.expected_rows.append(dict(detuid=nway_row["DETUID"], targetid=int(targetid),
                                        spectype=spectype, split_source=split_source,
                                        has_spectrum=has_spectrum, has_cutout=has_cutout))
@@ -325,7 +334,11 @@ class Builder:
                 kw["main_overrides"] = {"APE_BKG_P2": -0.5}
             if i in (9, 10, 11):
                 kw["main_overrides"] = {"APE_CTS_P2": 0, "DET_LIKE_P2": 0.0, "APE_POIS_P2": -9.99}
-            if i == 29:
+            if i == 28:
+                # a Galactic star: a perfectly good redshift, ZWARN == 0, not cosmological
+                kw["z"] = 6.75e-05
+            if i == 19:
+                # a QSO with no usable redshift: stays in the sample, has_z is False
                 kw["z"] = -0.0015
             if i in (22, 23, 24):
                 kw.update(program="bright", healpix=1235)
@@ -345,7 +358,9 @@ class Builder:
         S["ape_bkg_negative"] = {"detuid": clean[7]["detuid"], "band": "P2", "value": -0.5}
         S["flux_consistent_with_zero"] = {"detuid": clean[8]["detuid"], "band": "P3"}
         S["zero_counts_p2"] = {"detuids": [clean[i]["detuid"] for i in (9, 10, 11)]}
-        S["z_nonpositive"] = {"targetid": clean[29]["targetid"], "z": -0.0015}
+        S["z_nonpositive"] = {"targetid": clean[19]["targetid"], "z": -0.0015}
+        S["foreground_star"] = {"targetid": clean[28]["targetid"], "z": 6.75e-05,
+                                "zwarn": 0, "spectype": "STAR"}
 
         # a non-primary duplicate observation of clean[5] (sv3), dropped by ZCAT_PRIMARY
         d5 = clean[5]["desi"]
@@ -579,10 +594,10 @@ class Builder:
 
         # ---- expected counts ---------------------------------------------
         def census(rows):
-            out = {"QSO": 0, "GALAXY": 0, "STAR": 0}
+            out: dict = {}
             for r in rows:
-                out[r["spectype"]] += 1
-            return out
+                out[r["spectype"]] = out.get(r["spectype"], 0) + 1
+            return dict(sorted(out.items()))
 
         sample = [r for r in self.expected_rows
                   if not r["split_source"] and r["has_spectrum"] and r["has_cutout"]]
@@ -612,8 +627,12 @@ class Builder:
             rows = [e["desi"] for e in entries] + [foreign]
             scales = [e["line_scale"] for e in entries] + [None]
             self._write_coadd(path, rows, scales)
+            # The archive genuinely holds star spectra; the pipeline never asks for them,
+            # so what is planted here is what the crossmatch will actually request.
+            wanted = {r["targetid"] for r in self.expected_rows}
             self.planted["coadd_groups"][f"{survey}-{program}-{pix}"] = [
-                int(e["desi"]["TARGETID"]) for e in entries]
+                int(e["desi"]["TARGETID"]) for e in entries
+                if int(e["desi"]["TARGETID"]) in wanted]
 
     def _write_coadd(self, path: Path, rows: list[dict], scales: list) -> None:
         hdus = [fits.PrimaryHDU()]

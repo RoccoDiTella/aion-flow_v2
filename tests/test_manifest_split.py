@@ -72,7 +72,10 @@ def test_presence_flags_by_construction(run, planted):
     assert not _by_tid(manifest, S["no_spectrum"]["targetid"])["has_spectrum"]
     sample = manifest[manifest["in_sample"]]
     assert sample["has_spectrum"].all() and sample["has_image"].all()
-    assert int((~sample["has_z"]).sum()) == 2 and sample["has_wise"].all()
+    assert sorted(sample.loc[~sample["has_z"], "targetid"]) == sorted(
+        [S["zwarn_nonzero"]["targetid"], S["z_nonpositive"]["targetid"]])
+    assert sample["has_wise"].all()
+    assert not sample["spectype"].eq("STAR").any()
     p = ledger["extra"]
     assert p["presence_in_sample"]["has_z"] == int(sample["has_z"].sum())
     assert p["presence_fraction_in_sample"]["has_image"] == 1.0

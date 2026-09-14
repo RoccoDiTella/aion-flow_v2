@@ -39,6 +39,7 @@ nohup.out
 # the working plans stay with the maintainers; docs/DATA.md is the released contract
 docs/PLAN.md
 docs/PLAN_PHASE2.md
+docs/PLAN_RUNS.md
 
 # port notes from the old code base: maintainers only, like the plan
 docs/port_notes/

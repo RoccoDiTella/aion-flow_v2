@@ -138,6 +138,26 @@ def test_shared_targets(run, planted):
     assert not rest["targetid"].duplicated().any()
 
 
+def test_stars_leave_here(run, planted):
+    """We neither train nor predict on stars, so they go at the crossmatch rather than
+    being carried through labels, spectra and cutouts to be dropped at the end.
+
+    The planted case is the one no other gate catches: a Galactic star whose redshift
+    is perfectly good, ZWARN == 0, and about 1e-4 -- real, and not a distance. Pushed
+    through a luminosity distance it would sit many sigma below the sample and drag the
+    training standardizer with it, and no redshift-quality flag would object.
+    """
+    _, frame, ledger = run
+    star = planted["scenarios"]["foreground_star"]
+    assert star["spectype"] == "STAR" and star["zwarn"] == 0
+    assert 0 < star["z"] < 0.001                              # a good redshift, not a distance
+    assert star["targetid"] not in set(frame["targetid"])
+    assert not frame["spectype"].eq("STAR").any()
+    assert "STAR" not in ledger["extra"]["census"]
+    filters = {f["filter"]: f for f in ledger["filters"]}
+    assert filters["spectype_not_stellar"]["dropped"] == 2
+
+
 def test_carried_columns_and_types(run, planted):
     _, frame, _ = run
     S = planted["scenarios"]
@@ -146,7 +166,7 @@ def test_carried_columns_and_types(run, planted):
     r = frame[frame["targetid"] == S["zwarn_nonzero"]["targetid"]].iloc[0]
     assert r["zwarn"] == 4
     r = frame[frame["targetid"] == S["z_nonpositive"]["targetid"]].iloc[0]
-    assert r["z"] < 0 and r["spectype"] == "STAR"
+    assert r["z"] < 0
     assert frame["targetid"].dtype == np.int64
     assert frame["survey"].isin(["main"]).all()
     assert set(frame["program"]) <= {"dark", "bright", "backup"}
