@@ -100,6 +100,14 @@ within-object correlation. Tokenizing is a step of its own because AION's codecs
 cost about half a second per source, two orders of magnitude more than the
 encoder pass they feed, and are frozen and deterministic.
 
+A batch of 896 sources is 896 sequences of up to 853 tokens through a frozen
+318M-parameter encoder, which is why the trainer scores a batch in chunks and
+accumulates. The paper's runs used one NVIDIA H200 (141 GB) and report 88-91 GB
+peak allocated and 3.2 h for the four-dimensional joint. If your card is smaller,
+lower `CHUNK` (default 448 rows per forward); it changes memory and speed and not
+the gradient, which a test pins. Tokenizing and the emission-line baseline are
+far lighter and will run on almost anything.
+
 ## The sample in one paragraph
 
 DESI DR1 primary targets are matched to the LS10 positions of the eROSITA DR2
