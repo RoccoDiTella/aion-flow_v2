@@ -66,7 +66,8 @@ def test_good_staging_passes_every_check(good):
     assert verdict["passed"] and verdict["failed"] == []
     names = [c["check"] for c in verdict["checks"]]
     assert names == ["files_present", "manifest_and_split_present", "schema", "targetids",
-                     "split_sizes", "manifest_agreement", "content", "labels"]
+                     "split_sizes", "manifest_agreement", "detections_in_one_split",
+                     "content", "labels"]
     ledger = common.read_ledger("validate", cfg)
     assert ledger["counts"]["staged_targets"] == ledger["counts"]["labelled_targets"]
     assert ledger["counts"]["log_flux_1_finite"] == ledger["counts"]["staged_targets"]

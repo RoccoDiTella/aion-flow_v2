@@ -128,6 +128,19 @@ def observed(head: Head, batch: dict) -> Tensor:
     return torch.stack(columns, dim=1)
 
 
+def scorable_rows(run: Run, split) -> dict[str, int]:
+    """How many rows of a split each head can score at all.
+
+    A head whose target is entirely missing is built, is optimised over, contributes
+    nothing, and in a loss curve is indistinguishable from instant convergence. The
+    standardizer refuses fewer than two usable rows, which covers the common case, but
+    the objective would skip such a head without a word.
+    """
+    batch = {"y_ok": torch.from_numpy(split.y_ok),
+             "rate_ok": torch.from_numpy(split.rate_ok)}
+    return {head.name: int(observed(head, batch).any(dim=1).sum()) for head in run.heads}
+
+
 def axes_for(head: Head, batch: dict, rows: Tensor, seen: Tensor,
              standardizer: Standardizer) -> list:
     """The quadrature axes of one group of rows, which share an observation pattern."""

@@ -39,7 +39,7 @@ from aionflow_data.common import load_config
 
 from .config import TRAINING, load_run
 from .data import Split, Standardizer, TokenDataset, loader
-from .objective import Model, batch_loss, sample_subsets
+from .objective import Model, batch_loss, observed, sample_subsets, scorable_rows
 
 CHUNK = 448
 VALIDATION_SEED_OFFSET = 1_000
@@ -58,7 +58,6 @@ def to_device(batch: dict, device) -> dict:
 
 def scorable_counts(model: Model, batch: dict) -> dict[str, int]:
     """How many rows of the whole batch each head can score, before it is chunked."""
-    from .objective import observed
     return {head.name: int(observed(head, batch).any(dim=1).sum()) for head in model.run.heads}
 
 
@@ -123,6 +122,12 @@ def fit(model, datasets: dict, masks: dict, out: str | Path, *, device: str = "c
     schedule, the selection rule and the checkpoint are the same for both."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    trainable = scorable_rows(model.run, datasets["train"].split)
+    dead = sorted(name for name, rows in trainable.items() if rows == 0)
+    if dead:
+        raise TrainError(f"heads {dead} can score no training row, so they would be "
+                         f"optimised over in silence and look converged; check the "
+                         f"label columns their targets name")
     optimizer = torch.optim.AdamW(model.parameter_groups(TRAINING), betas=TRAINING.betas)
     generator = torch.Generator().manual_seed(TRAINING.seed)
     epochs = TRAINING.max_epochs if max_epochs is None else int(max_epochs)

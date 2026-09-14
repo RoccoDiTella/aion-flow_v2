@@ -91,6 +91,51 @@ def test_the_read_is_the_block_run_on_the_sequence_with_the_cls_hidden_as_a_key(
     assert torch.allclose(reference[:, :tokens], block(x, mask=absent.unsqueeze(1)), atol=1e-6)
 
 
+def test_trained_deltas_enter_before_the_qk_norm_and_after_the_pre_norm():
+    """"The block's QK norm acts on q and K after the deltas", and the deltas act on the
+    token the block has already pre-normed.
+
+    The zero-delta test above cannot see either: with B = 0 the delta contributes
+    nothing, so the order it is applied in is unobservable. Here the reference is a
+    copy of the block with the deltas baked into its own qkv weight, so AION's own
+    forward puts the norm after them structurally rather than by our arrangement. If
+    we normed before adding the deltas, or fed them the raw token, this disagrees.
+    """
+    import copy
+
+    block = a_block()
+    rows, tokens = 3, 7
+    x, cls = torch.randn(rows, tokens, SMALL), torch.randn(rows, 1, SMALL)
+    absent = torch.zeros(rows, tokens, dtype=torch.bool)
+
+    read = BlockRead(SMALL, RANK)
+    torch.manual_seed(3)
+    for delta in (read.query, read.key, read.value):
+        delta.b.data.normal_(std=0.2)                      # deltas that actually do something
+
+    baked = copy.deepcopy(block)
+    with torch.no_grad():
+        deltas = torch.cat([(d.b @ d.a) for d in (read.query, read.key, read.value)], dim=0)
+        baked.attn.qkv.weight.add_(deltas)                 # W_Q + dQ, W_K + dK, W_V + dV
+    joint = torch.cat([x, cls], dim=1)
+    joint_mask = torch.cat([absent, torch.ones(rows, 1, dtype=torch.bool)], dim=1)
+    reference = baked(joint, mask=joint_mask.unsqueeze(1))[:, tokens:]
+
+    x_hat = block.norm1(x)
+    out = cls + block.drop_path(read(block, block.norm1(cls), x_hat, absent.unsqueeze(1)))
+    out = out + block.drop_path(block.mlp(block.norm2(out)))
+    # 1e-4 sits three orders above this pair's float32 agreement and three below the
+    # nearest way of getting it wrong: norming before the deltas misses by 1.9, feeding
+    # them the raw token by 0.5.
+    assert torch.allclose(out, reference, atol=1e-4)
+
+    # and the deltas are doing enough work that the agreement means something
+    zeroed = BlockRead(SMALL, RANK)
+    flat = cls + block.drop_path(zeroed(block, block.norm1(cls), x_hat, absent.unsqueeze(1)))
+    flat = flat + block.drop_path(block.mlp(block.norm2(flat)))
+    assert (out - flat).abs().max() > 1e-3
+
+
 def test_a_trained_delta_changes_the_read_and_only_the_read():
     block = a_block()
     x, cls = torch.randn(3, 7, SMALL), torch.randn(3, 1, SMALL)

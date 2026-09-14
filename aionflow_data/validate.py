@@ -150,6 +150,18 @@ def check_manifest_agreement(rep: Report, handles: dict, manifest: pd.DataFrame)
     rep.check("manifest_agreement", not problems, "; ".join(problems[:4]) or
               "flags and redshift match")
 
+    # No X-ray detection may reach two splits. The crossmatch resolves to one row per
+    # detection and one per target before the split is drawn, so a detection belongs to
+    # exactly one object and this is a restatement of that -- which is the reason to
+    # assert it rather than assume it, because a second fibre on one detection would put
+    # the same photons on both sides of the split and nothing downstream would notice.
+    per_detuid = man.groupby("ero_detuid")["split"].nunique()
+    shared = per_detuid[per_detuid > 1]
+    rep.check("detections_in_one_split", shared.empty,
+              f"{len(shared):,} detections span two splits, first "
+              f"{shared.index[0] if len(shared) else ''}" if len(shared)
+              else f"{len(per_detuid):,} detections, each in one split")
+
 
 def check_content(rep: Report, handles: dict, manifest: pd.DataFrame, cfg: dict) -> None:
     man = _sample(manifest)
