@@ -100,6 +100,14 @@ within-object correlation. Tokenizing is a step of its own because AION's codecs
 cost about half a second per source, two orders of magnitude more than the
 encoder pass they feed, and are frozen and deterministic.
 
+If your machine has no Python development headers, export
+`TORCH_DISABLE_NATIVE_JIT=1` before training. Torch routes some operators to
+Triton kernels, and Triton compiles a small CUDA shim that includes `Python.h`;
+without it the backward pass dies with a `gcc` error about a missing header. The
+variable is torch's own kill switch and sends those operators back to the aten
+kernels they were overriding. Tokenizing is unaffected, being forward-only, so
+the failure appears only once training starts.
+
 A batch of 896 sources is 896 sequences of up to 853 tokens through a frozen
 318M-parameter encoder, which is why the trainer scores a batch in chunks and
 accumulates. The paper's runs used one NVIDIA H200 (141 GB) and report 88-91 GB
