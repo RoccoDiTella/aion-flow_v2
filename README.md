@@ -118,7 +118,10 @@ reliability cut is NWAY's own per-tile threshold, `p_any > threshold6`, with a
 flat `p_any >= 0.05` where the calibration is absent. A target adopted by two
 detections is a split source when the X-ray positions lie within 15
 arcseconds (both rows excluded) and a collision otherwise (the higher
-`dist_post` wins). The sample is what remains with a spectrum and a cutout.
+`dist_post` wins). Targets DESI classes as `STAR` are dropped here: we neither
+train nor predict on them, and a Galactic star's redshift is real without being
+a distance, so no redshift-quality flag would catch it. The sample is what
+remains with a spectrum and a cutout.
 The split is a seeded random permutation of the sample (seed 42) cut at
 80/10/10. Detection likelihood, redshift quality and WISE availability are
 carried as label gates and presence flags, never as sample cuts.
