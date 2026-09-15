@@ -121,35 +121,31 @@ def test_a_codec_that_returns_the_wrong_shape_is_refused(tokenized):
 
 # ----------------------------------------------------------------------------- real codecs
 
-def test_everything_handed_to_the_codecs_is_on_the_requested_device(splits):
+DEVICES = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_everything_handed_to_the_codecs_is_on_the_requested_device(splits, device):
     """The codecs move themselves to the device and not their inputs, so we must.
 
-    On CPU this is vacuous, which is exactly why the omission survived a CPU-only
-    smoke and only failed on the box: the first codec to index a buffer of its own
-    against our data raised `boundaries is on cuda:0, other tensors on cpu`.
+    On CPU this is vacuous, which is why the omission survived a CPU-only smoke -
+    including an end-to-end one against the real AION-1-B - and only failed on the
+    box, where the first codec to index a buffer of its own against our data raised
+    `boundaries is on cuda:0, different from other tensors on cpu`. Parametrized so
+    the machine that has a GPU checks the case that needs one.
     """
     from aionflow_model.tokenize import modalities
 
-    want = torch.device("cpu")
-    for modality in modalities(splits["train"], 0, 2, "cpu"):
+    want = torch.device(device)
+    for modality in modalities(splits["train"], 0, 2, device):
         tensors = [v for v in vars(modality).values() if isinstance(v, torch.Tensor)]
         assert tensors, type(modality).__name__
-        assert all(t.device == want for t in tensors), type(modality).__name__
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
-def test_the_codecs_run_on_a_gpu(splits):
-    from aion.codecs import CodecManager
-
-    from aionflow_model.tokenize import encode_block
-
-    tokens = encode_block(CodecManager(device="cuda"), splits["train"], 0, 2, "cuda")
-    for key in ALL_TOKEN_KEYS:
-        assert tokens[key].shape == (2, TOKEN_SIZES[key])
+        assert all(t.device.type == want.type for t in tensors), type(modality).__name__
 
 
 @NEEDS_AION
-def test_the_real_codecs_give_the_token_counts_the_encoder_expects():
+@pytest.mark.parametrize("device", DEVICES)
+def test_the_real_codecs_give_the_token_counts_the_encoder_expects(device):
     """AION's encoder asserts a fixed token count per modality, so ours must match.
 
     At the production cutout size, not the fixtures': the image codec centre-crops,
@@ -175,7 +171,12 @@ def test_the_real_codecs_give_the_token_counts_the_encoder_expects():
         LegacySurveyFluxW3(value=torch.rand(rows)),
         Z(value=torch.rand(rows)),
     ]
-    codecs = CodecManager(device="cpu")
+    codecs = CodecManager(device=device)
+
+    for m in modalities:
+        for name, value in vars(m).items():
+            if isinstance(value, torch.Tensor):
+                setattr(m, name, value.to(device))
     tokens = codecs.encode(*modalities)
     assert set(tokens) == set(ALL_TOKEN_KEYS)
     for key, ids in tokens.items():
