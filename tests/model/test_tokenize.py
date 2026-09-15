@@ -121,6 +121,33 @@ def test_a_codec_that_returns_the_wrong_shape_is_refused(tokenized):
 
 # ----------------------------------------------------------------------------- real codecs
 
+def test_everything_handed_to_the_codecs_is_on_the_requested_device(splits):
+    """The codecs move themselves to the device and not their inputs, so we must.
+
+    On CPU this is vacuous, which is exactly why the omission survived a CPU-only
+    smoke and only failed on the box: the first codec to index a buffer of its own
+    against our data raised `boundaries is on cuda:0, other tensors on cpu`.
+    """
+    from aionflow_model.tokenize import modalities
+
+    want = torch.device("cpu")
+    for modality in modalities(splits["train"], 0, 2, "cpu"):
+        tensors = [v for v in vars(modality).values() if isinstance(v, torch.Tensor)]
+        assert tensors, type(modality).__name__
+        assert all(t.device == want for t in tensors), type(modality).__name__
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+def test_the_codecs_run_on_a_gpu(splits):
+    from aion.codecs import CodecManager
+
+    from aionflow_model.tokenize import encode_block
+
+    tokens = encode_block(CodecManager(device="cuda"), splits["train"], 0, 2, "cuda")
+    for key in ALL_TOKEN_KEYS:
+        assert tokens[key].shape == (2, TOKEN_SIZES[key])
+
+
 @NEEDS_AION
 def test_the_real_codecs_give_the_token_counts_the_encoder_expects():
     """AION's encoder asserts a fixed token count per modality, so ours must match.

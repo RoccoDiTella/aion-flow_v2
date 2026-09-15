@@ -48,8 +48,13 @@ class TokenizeError(RuntimeError):
     pass
 
 
-def modalities(split: Split, lo: int, hi: int):
-    """AION modality objects for rows [lo, hi) of `split`."""
+def modalities(split: Split, lo: int, hi: int, device: str = "cpu"):
+    """AION modality objects for rows [lo, hi) of `split`, on `device`.
+
+    The codecs move themselves to the device but not their inputs, so everything
+    handed to them has to be there already. On CPU the omission is invisible; on a
+    GPU the first codec that indexes a buffer of its own against our data raises.
+    """
     from aion.modalities import (
         DESISpectrum,
         LegacySurveyFluxW1,
@@ -58,21 +63,23 @@ def modalities(split: Split, lo: int, hi: int):
         LegacySurveyImage,
         Z,
     )
-    flux, ivar = split.spectra(lo, hi)
-    wavelength = torch.from_numpy(split.wavelength).expand(hi - lo, -1)
-    wise = torch.from_numpy(split.wise[lo:hi].astype(np.float32))
+    flux, ivar = (t.to(device) for t in split.spectra(lo, hi))
+    wavelength = torch.from_numpy(split.wavelength).to(device).expand(hi - lo, -1)
+    wise = torch.from_numpy(split.wise[lo:hi].astype(np.float32)).to(device)
     return [
         DESISpectrum(flux=flux, ivar=ivar, mask=ivar <= 0, wavelength=wavelength),
-        LegacySurveyImage(flux=split.images(lo, hi), bands=list(split.image_bands)),
+        LegacySurveyImage(flux=split.images(lo, hi).to(device),
+                          bands=list(split.image_bands)),
         LegacySurveyFluxW1(value=wise[:, 0]),
         LegacySurveyFluxW2(value=wise[:, 1]),
         LegacySurveyFluxW3(value=wise[:, 2]),
-        Z(value=torch.from_numpy(split.redshift[lo:hi].astype(np.float32))),
+        Z(value=torch.from_numpy(split.redshift[lo:hi].astype(np.float32)).to(device)),
     ]
 
 
-def encode_block(codecs, split: Split, lo: int, hi: int) -> dict[str, np.ndarray]:
-    tokens = codecs.encode(*modalities(split, lo, hi))
+def encode_block(codecs, split: Split, lo: int, hi: int,
+                 device: str = "cpu") -> dict[str, np.ndarray]:
+    tokens = codecs.encode(*modalities(split, lo, hi, device))
     out = {}
     for key in ALL_TOKEN_KEYS:
         if key not in tokens:
@@ -87,7 +94,7 @@ def encode_block(codecs, split: Split, lo: int, hi: int) -> dict[str, np.ndarray
 
 
 def tokenize_split(split: Split, dest: Path, codecs, block: int = BLOCK,
-                   log=print) -> dict:
+                   device: str = "cpu", log=print) -> dict:
     tmp = dest.with_name(dest.name + ".part")
     with h5py.File(tmp, "w") as h:
         h.create_dataset("targetid", data=split.targetid, track_times=False)
@@ -96,7 +103,7 @@ def tokenize_split(split: Split, dest: Path, codecs, block: int = BLOCK,
                 for key in ALL_TOKEN_KEYS}
         for lo in range(0, split.n, block):
             hi = min(lo + block, split.n)
-            for key, value in encode_block(codecs, split, lo, hi).items():
+            for key, value in encode_block(codecs, split, lo, hi, device).items():
                 sets[key][lo:hi] = value
             log(f"[tokenize] {split.name}: {hi:,}/{split.n:,}", flush=True)
         h.attrs["codec_repo"] = CODEC_REPO
@@ -121,7 +128,7 @@ def run(cfg: dict, *, splits=SPLITS, device: str = "cpu", block: int = BLOCK,
         split = Split(staged, work, name)
         try:
             out[name] = tokenize_split(split, staged / TOKENS_FILE.format(split=name),
-                                       codecs, block=block, log=log)
+                                       codecs, block=block, device=device, log=log)
         finally:
             split.close()
     write_ledger(STEP, cfg,
