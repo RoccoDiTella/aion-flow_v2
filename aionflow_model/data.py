@@ -209,10 +209,16 @@ class Split:
         self.detuid = rows["ero_detuid"].to_numpy(str)
         self.spectype = rows["spectype"].to_numpy(str)
         labels = _index_unique(_read_csv(work / LABELS_FILE, "labels"), "ero_detuid", LABELS_FILE)
-        absent = np.setdiff1d(self.detuid, labels.index.to_numpy())
-        if absent.size:
-            raise DataError(f"{absent.size} staged DETUIDs have no labels row, first {absent[0]}")
-        labels = labels.reindex(self.detuid)
+        # get_indexer is a hash lookup. np.setdiff1d here was a sort, and between our
+        # <U32 array and pandas' object index numpy falls back to comparing Python
+        # strings one at a time: six minutes on the real sample, against a tenth of a
+        # second, and invisible on fixtures of thirty rows.
+        where = labels.index.get_indexer(self.detuid)
+        if (where < 0).any():
+            absent = self.detuid[where < 0]
+            raise DataError(f"{absent.size} staged DETUIDs have no labels row, "
+                            f"first {absent[0]}")
+        labels = labels.take(where)
         self.y_raw = np.stack([labels[TARGETS[t].columns[0]].to_numpy(float)
                                for t in SCALAR_TARGETS], 1)
         self.y_ok = np.isfinite(self.y_raw)

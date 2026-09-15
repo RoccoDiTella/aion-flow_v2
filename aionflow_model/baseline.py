@@ -101,11 +101,12 @@ def read_lines(work: str | Path, targetid: np.ndarray) -> np.ndarray:
     if not path.is_file():
         raise BaselineError(f"missing {path}; run aionflow_data.line_features")
     frame = pd.read_csv(path).set_index("targetid")
-    missing = np.setdiff1d(targetid, frame.index.to_numpy())
-    if missing.size:
+    where = frame.index.get_indexer(targetid)          # a hash lookup, not a sort
+    if (where < 0).any():
+        missing = np.asarray(targetid)[where < 0]
         raise BaselineError(f"{missing.size} sample targets have no line features, "
                             f"first {missing[0]}")
-    rows = frame.reindex(targetid)
+    rows = frame.take(where)
     return np.stack([rows[f"{line}_flux"].to_numpy(float) for line in LINES], axis=1)
 
 
