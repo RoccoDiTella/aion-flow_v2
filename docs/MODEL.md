@@ -121,6 +121,7 @@ Each is written into the run directory, so a reader can see what was done.
 | choice | what this package does |
 |---|---|
 | modality-dropout clamp | the size is drawn over the k modalities the source has, which is the paper's rule whenever k = 4 and never returns an empty set |
+| rows a mixed joint trains on | at least one observed scalar, not merely one observed dimension. This is a deliberate departure from the appendix, which integrates any missing dimension out without qualification: a source with both rates and neither scalar can only tell the four-dimensional joint what the dedicated rate head already carries, and costs K^2 = 144 times the nodes to say it. On our sample that is 4.6% of sources and two thirds of the joint's whole quadrature budget. Training only; every test source still has posterior draws, so nothing is lost from the within-object correlation |
 | training objective | the mean over heads of the per-row NLL, not the sum, so one set of learning rates serves a five-head run and a one-head run |
 | batch chunking | a batch is scored in chunks; each head's mean is taken over its scorable rows in the whole batch, so the accumulated gradient is the whole batch's |
 | validation metric | the unweighted mean over trained heads of their per-row NLL, on the rows each head can score |

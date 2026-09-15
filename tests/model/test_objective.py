@@ -19,6 +19,7 @@ from aionflow_model.objective import (
     head_log_likelihood,
     observed,
     sample_subsets,
+    scorable,
 )
 from aionflow_model.poisson import K, log_marginal, pinned, prior_axis, rate_axis
 from tests.model.fake import FakeBackbone
@@ -101,11 +102,11 @@ def test_a_scalar_head_scores_only_the_rows_that_have_the_label(standardizer):
     head = Head("sfr", ("sfr",))
     batch = a_batch()
     context = torch.zeros(6, 1, dtype=torch.float64)
-    values, scorable = head_log_likelihood(head, UnitNormal(), context, batch, standardizer)
-    assert scorable.tolist() == [False, False, True, True, True, True]
+    values, keep = head_log_likelihood(head, UnitNormal(), context, batch, standardizer)
+    assert keep.tolist() == [False, False, True, True, True, True]
     want = -0.5 * batch["y"][:, SCALAR_TARGETS.index("sfr")] ** 2 - 0.5 * math.log(2 * math.pi)
-    assert torch.allclose(values[scorable], want[scorable])
-    assert (values[~scorable] == 0).all()
+    assert torch.allclose(values[keep], want[keep])
+    assert (values[~keep] == 0).all()
 
 
 def test_a_joint_pins_what_is_observed_and_integrates_what_is_not(standardizer):
@@ -113,8 +114,8 @@ def test_a_joint_pins_what_is_observed_and_integrates_what_is_not(standardizer):
     batch = a_batch()
     sfr, mstar = SCALAR_TARGETS.index("sfr"), SCALAR_TARGETS.index("mstar")
     context = torch.zeros(6, 1, dtype=torch.float64)
-    values, scorable = head_log_likelihood(head, UnitNormal(), context, batch, standardizer)
-    assert scorable.tolist() == [True, False, True, True, True, True]
+    values, keep = head_log_likelihood(head, UnitNormal(), context, batch, standardizer)
+    assert keep.tolist() == [True, False, True, True, True, True]
 
     # row 0 has M* but not SFR: SFR integrates on the prior grid, M* stays pinned
     want = log_marginal([prior_axis(1, dtype=torch.float64), pinned(batch["y"][0:1, mstar])],
@@ -133,8 +134,8 @@ def test_a_rate_head_integrates_the_counts_and_falls_back_when_a_band_is_missing
     head = Head("rates", RATE_TARGETS)
     batch = a_batch()
     context = torch.zeros(6, 1, dtype=torch.float64)
-    values, scorable = head_log_likelihood(head, UnitNormal(), context, batch, standardizer)
-    assert scorable.all()          # a zero-count band is a measurement, so every row scores
+    values, keep = head_log_likelihood(head, UnitNormal(), context, batch, standardizer)
+    assert keep.all()          # a zero-count band is a measurement, so every row scores
 
     def band(row, j):
         target = RATE_TARGETS[j]
@@ -165,13 +166,40 @@ def test_the_flow_runs_in_its_own_precision_and_the_sum_in_double(standardizer):
     assert not torch.equal(double, single)
 
 
+def test_a_mixed_joint_skips_sources_with_no_observed_scalar(standardizer):
+    """Integrating both scalars out of the four-dimensional joint tells it only what the
+    dedicated rate head already carries, and costs K^2 extra nodes to say it.
+
+    On the real sample that is 4.6% of sources and two thirds of the joint's entire
+    quadrature budget, so those rows are not trained on. A pure rate head is unaffected:
+    there is no scalar for it to be missing.
+    """
+    batch = a_batch()
+    mixed = Head("joint4", ("rate_p2", "rate_p3", "sfr", "mstar"))
+    rates = Head("rates", RATE_TARGETS)
+    scalars = Head("sfr_mstar", ("sfr", "mstar"))
+
+    # row 1 has both rates and neither scalar; row 0 has one scalar, row 2 one rate
+    assert not batch["y_ok"][1].any() and batch["rate_ok"][1].all()
+    assert scorable(mixed, batch).tolist() == [True, False, True, True, True, True]
+    assert observed(mixed, batch).any(dim=1).tolist() == [True] * 6   # the old rule kept it
+    assert scorable(rates, batch).all()                               # no scalar to miss
+    assert scorable(scalars, batch).tolist() == [True, False, True, True, True, True]
+
+    # and the row really is left out of the likelihood, not merely flagged
+    context = torch.zeros(6, 1, dtype=torch.float64)
+    values, keep = head_log_likelihood(mixed, UnitNormal(), context, batch, standardizer)
+    assert not keep[1] and values[1] == 0.0
+    assert keep.sum() == 5
+
+
 def test_a_row_with_nothing_observed_is_not_scored(standardizer):
     batch = a_batch()
     batch["y_ok"][:] = False
     head = Head("sfr_mstar", ("sfr", "mstar"))
     context = torch.zeros(6, 1, dtype=torch.float64)
-    _, scorable = head_log_likelihood(head, UnitNormal(), context, batch, standardizer)
-    assert not scorable.any()
+    _, keep = head_log_likelihood(head, UnitNormal(), context, batch, standardizer)
+    assert not keep.any()
     assert observed(head, batch).shape == (6, 2)
 
 

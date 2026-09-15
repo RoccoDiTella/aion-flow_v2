@@ -128,8 +128,31 @@ def observed(head: Head, batch: dict) -> Tensor:
     return torch.stack(columns, dim=1)
 
 
+def scorable(head: Head, batch: dict) -> Tensor:
+    """Which rows a head is trained on.
+
+    A source needs at least one observed dimension, because integrating every
+    dimension out gives log 1 whatever the model says.
+
+    A head that mixes rates with scalars needs more than that: a source with no
+    observed scalar can only tell the joint what the dedicated rate head already
+    carries, and it costs K^2 extra nodes to say it. In our sample that is 4.6% of
+    sources and two thirds of the four-dimensional joint's whole quadrature budget.
+    Excluding them is a deliberate departure from the appendix, which integrates any
+    missing dimension out without qualification; it affects training only, since rho
+    is read from posterior draws and every test source still has them.
+    """
+    seen = observed(head, batch)
+    ok = seen.any(dim=1)
+    kinds = head.kinds
+    if "rate" in kinds and "scalar" in kinds:
+        columns = [i for i, kind in enumerate(kinds) if kind == "scalar"]
+        ok = ok & seen[:, columns].any(dim=1)
+    return ok
+
+
 def scorable_rows(run: Run, split) -> dict[str, int]:
-    """How many rows of a split each head can score at all.
+    """How many rows of a split each head is trained on.
 
     A head whose target is entirely missing is built, is optimised over, contributes
     nothing, and in a loss curve is indistinguishable from instant convergence. The
@@ -138,7 +161,7 @@ def scorable_rows(run: Run, split) -> dict[str, int]:
     """
     batch = {"y_ok": torch.from_numpy(split.y_ok),
              "rate_ok": torch.from_numpy(split.rate_ok)}
-    return {head.name: int(observed(head, batch).any(dim=1).sum()) for head in run.heads}
+    return {head.name: int(scorable(head, batch).sum()) for head in run.heads}
 
 
 def axes_for(head: Head, batch: dict, rows: Tensor, seen: Tensor,
@@ -161,18 +184,18 @@ def axes_for(head: Head, batch: dict, rows: Tensor, seen: Tensor,
 
 def head_log_likelihood(head: Head, flow: FlowHead, context: Tensor, batch: dict,
                         standardizer: Standardizer) -> tuple[Tensor, Tensor]:
-    """log p of a head's targets per row, and the rows it can score."""
+    """log p of a head's targets per row, and the rows it is trained on."""
     seen = observed(head, batch)
-    scorable = seen.any(dim=1)
+    keep = scorable(head, batch)
     out = torch.zeros(seen.shape[0], dtype=torch.float64, device=context.device)
-    patterns = torch.unique(seen[scorable], dim=0) if bool(scorable.any()) else seen[:0]
+    patterns = torch.unique(seen[keep], dim=0) if bool(keep.any()) else seen[:0]
     for pattern in patterns:
-        rows = torch.nonzero((seen == pattern).all(dim=1) & scorable, as_tuple=True)[0]
+        rows = torch.nonzero((seen == pattern).all(dim=1) & keep, as_tuple=True)[0]
         axes = axes_for(head, batch, rows, pattern, standardizer)
         here = context[rows]
         out = out.index_put((rows,), log_marginal(
             axes, lambda u, c=here: flow.log_prob(u.to(c.dtype), c).to(torch.float64)))
-    return out, scorable
+    return out, keep
 
 
 def batch_loss(log_likelihoods: dict[str, tuple[Tensor, Tensor]],

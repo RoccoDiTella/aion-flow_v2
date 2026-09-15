@@ -39,7 +39,7 @@ from aionflow_data.common import load_config
 
 from .config import TRAINING, load_run
 from .data import Split, Standardizer, TokenDataset, loader
-from .objective import Model, batch_loss, observed, sample_subsets, scorable_rows
+from .objective import Model, batch_loss, sample_subsets, scorable, scorable_rows
 
 CHUNK = 448
 VALIDATION_SEED_OFFSET = 1_000
@@ -58,7 +58,7 @@ def to_device(batch: dict, device) -> dict:
 
 def scorable_counts(model: Model, batch: dict) -> dict[str, int]:
     """How many rows of the whole batch each head can score, before it is chunked."""
-    return {head.name: int(observed(head, batch).any(dim=1).sum()) for head in model.run.heads}
+    return {head.name: int(scorable(head, batch).sum()) for head in model.run.heads}
 
 
 def chunks(batch: dict, size: int):
@@ -138,6 +138,10 @@ def fit(model, datasets: dict, masks: dict, out: str | Path, *, device: str = "c
         "validation_masks": "one subset per source, drawn once at seed "
                             f"{TRAINING.seed + VALIDATION_SEED_OFFSET}",
         "objective": "mean over heads of the per-row NLL, rows weighted by the whole batch",
+        "mixed_joint_rows": "a head mixing rates with scalars is trained only on sources "
+                            "with at least one observed scalar; integrating both out says "
+                            "only what the rate head already carries and costs K^2 nodes",
+        "rows_trained_per_head": trainable,
         "batch_chunk_rows": chunk,
         "training": vars(TRAINING),
         **(choices or {}),
