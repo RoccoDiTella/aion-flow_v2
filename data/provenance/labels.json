@@ -1,6 +1,6 @@
 {
   "step": "labels",
-  "written_utc": "2026-09-11T14:54:19+00:00",
+  "written_utc": "2026-09-15T02:07:02+00:00",
   "config": {
     "path": "/h/rditella/aion-flow_v2/config.yaml",
     "sha256": "db11ece025587349bffb903e637b3a5d7b13ce5aa40bf9bcb21ca66a9c2d87ef"
@@ -8,8 +8,8 @@
   "inputs": {
     "crossmatch": {
       "path": "/h/rditella/aion-flow_v2/data/work/crossmatch.parquet",
-      "bytes": 19149692,
-      "sha256": "abf3a103b2e63ab929ec6d09531f6c74410cf50d1ca98b2b7ed42e08336db620"
+      "bytes": 18837653,
+      "sha256": "d05163afc87715d101f1a9292a165536f67fc24a36921781076a9f8cb9ddd67f"
     },
     "main": {
       "path": "/h/rditella/aion-flow_v2/data/raw/eRASS3_Main_v1.3.fits",
@@ -23,50 +23,50 @@
     }
   },
   "counts": {
-    "rows_out": 131314,
-    "log_flux_1_finite": 131248,
-    "log_lx_finite": 130265,
-    "log_flux_p2_finite": 122947,
-    "log_flux_p3_finite": 119907,
+    "rows_out": 129360,
+    "log_flux_1_finite": 129294,
+    "log_lx_finite": 129140,
+    "log_flux_p2_finite": 121051,
+    "log_flux_p3_finite": 118263,
     "log_sfr_finite": 104050,
     "logmstar_cigale_finite": 116318,
-    "ape_triple_1_complete": 131314,
-    "ape_triple_p2_complete": 131314,
-    "ape_triple_p3_complete": 131314
+    "ape_triple_1_complete": 129360,
+    "ape_triple_p2_complete": 129360,
+    "ape_triple_p3_complete": 129360
   },
   "filters": [],
   "extra": {
     "xray": {
       "1": {
-        "flux_measured": 131248,
+        "flux_measured": 129294,
         "flux_not_a_measurement": 66,
-        "det_like_gt_6": 131314,
+        "det_like_gt_6": 129360,
         "ape_cts_wrapped": 0,
         "ape_bkg_negative_clipped": 2,
         "ape_cts_zero": 0,
-        "ape_triple_complete": 131314
+        "ape_triple_complete": 129360
       },
       "p2": {
-        "flux_measured": 122947,
-        "flux_not_a_measurement": 8367,
-        "det_like_gt_6": 67809,
+        "flux_measured": 121051,
+        "flux_not_a_measurement": 8309,
+        "det_like_gt_6": 66413,
         "ape_cts_wrapped": 0,
         "ape_bkg_negative_clipped": 0,
-        "ape_cts_zero": 2867,
-        "ape_triple_complete": 131314
+        "ape_cts_zero": 2841,
+        "ape_triple_complete": 129360
       },
       "p3": {
-        "flux_measured": 119907,
-        "flux_not_a_measurement": 11407,
-        "det_like_gt_6": 64136,
+        "flux_measured": 118263,
+        "flux_not_a_measurement": 11097,
+        "det_like_gt_6": 63377,
         "ape_cts_wrapped": 0,
         "ape_bkg_negative_clipped": 0,
-        "ape_cts_zero": 4683,
-        "ape_triple_complete": 131314
+        "ape_cts_zero": 4556,
+        "ape_triple_complete": 129360
       },
       "log_lx": {
-        "finite": 130265,
-        "z_le_0": 983
+        "finite": 129140,
+        "z_below_0.001": 154
       }
     },
     "cigale": {
@@ -101,8 +101,8 @@
     },
     "output": {
       "path": "/h/rditella/aion-flow_v2/data/work/labels.csv",
-      "bytes": 107524424,
-      "sha256": "e3cd72cbed447e23a81b00963cce56cf7fd4b4356c05d3fab398ec452fffd396"
+      "bytes": 106104288,
+      "sha256": "6e5ad926b96ff61b2fc3d1928db7df1fd38e5a58b8fd20ad744784de592bc77c"
     }
   }
 }
