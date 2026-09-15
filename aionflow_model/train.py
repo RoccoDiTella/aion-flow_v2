@@ -150,6 +150,8 @@ def fit(model, datasets: dict, masks: dict, out: str | Path, *, device: str = "c
     history, best, since = [], None, 0
     for epoch in range(epochs):
         started = time.time()
+        if device != "cpu" and torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
         train_batches = loader(datasets["train"], TRAINING.batch_size, shuffle=True,
                                workers=workers, seed=TRAINING.seed + epoch)
         losses = train_epoch(model, train_batches, optimizer, generator, device, chunk,
@@ -157,8 +159,13 @@ def fit(model, datasets: dict, masks: dict, out: str | Path, *, device: str = "c
         val_batches = loader(datasets["val"], TRAINING.batch_size, shuffle=False,
                              workers=workers)
         metric, per_head = validate(model, val_batches, masks, device, chunk)
+        # The paper reports peak allocated memory and wall time per run, and the
+        # chunk size is the only thing that moves the first of them, so record both.
+        peak = (torch.cuda.max_memory_allocated() / 2 ** 30
+                if device != "cpu" and torch.cuda.is_available() else None)
         history.append({"epoch": epoch, "train": losses, "val": per_head,
-                        "metric": metric, "seconds": time.time() - started})
+                        "metric": metric, "seconds": time.time() - started,
+                        "peak_gib": None if peak is None else round(peak, 2)})
         (out / HISTORY).write_text(json.dumps(history, indent=1) + "\n")
         improved = best is None or metric < best["metric"]
         log(f"[train] epoch {epoch:3d}  val {metric:.4f}"

@@ -44,6 +44,9 @@ def test_two_epochs_on_the_fixtures_leave_a_run_directory(trained):
         assert entry["metric"] == pytest.approx(
             sum(entry["val"].values()) / len(entry["val"]))
         assert entry["train"] and entry["seconds"] > 0
+        # peak memory is recorded on a GPU and is None on CPU, where there is none
+        assert "peak_gib" in entry
+        assert entry["peak_gib"] is None or entry["peak_gib"] > 0
     assert (out / "standardizer.json").is_file() and (out / CHECKPOINT).is_file()
     assert result["best"]["metric"] == min(h["metric"] for h in history)
 
