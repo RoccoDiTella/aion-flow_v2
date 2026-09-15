@@ -1,0 +1,96 @@
+{
+  "step": "manifest_split",
+  "written_utc": "2026-09-15T05:23:30+00:00",
+  "config": {
+    "path": "/h/rditella/aion-flow_v2/config.yaml",
+    "sha256": "db11ece025587349bffb903e637b3a5d7b13ce5aa40bf9bcb21ca66a9c2d87ef"
+  },
+  "inputs": {
+    "crossmatch": {
+      "path": "/h/rditella/aion-flow_v2/data/work/crossmatch.parquet",
+      "bytes": 18837653,
+      "sha256": "d05163afc87715d101f1a9292a165536f67fc24a36921781076a9f8cb9ddd67f"
+    },
+    "spectra_source": {
+      "path": "/h/rditella/aion-flow_v2/data/work/spectra/source.h5",
+      "bytes": 8159415608,
+      "sha256": "a824c0bd8dac0ce1715612d641e65dacf65689b1bb6e68d11d02f74e8988fcaa"
+    }
+  },
+  "counts": {
+    "crossmatch_rows": 129360,
+    "sample_rows": 129356,
+    "split_source_rows_excluded": 4,
+    "rows_train": 103485,
+    "rows_val": 12935,
+    "rows_test": 12936
+  },
+  "filters": [
+    {
+      "filter": "split_source_pairs_excluded",
+      "kept": 129356,
+      "dropped": 4
+    },
+    {
+      "filter": "has_spectrum",
+      "kept": 129356,
+      "dropped": 0
+    },
+    {
+      "filter": "has_image",
+      "kept": 129356,
+      "dropped": 0
+    }
+  ],
+  "extra": {
+    "seed": 42,
+    "fractions": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "presence_in_sample": {
+      "has_spectrum": 129356,
+      "has_z": 126392,
+      "has_wise": 129343,
+      "has_image": 129356
+    },
+    "presence_fraction_in_sample": {
+      "has_spectrum": 1.0,
+      "has_z": 0.9770864899965985,
+      "has_wise": 0.9998995021491079,
+      "has_image": 1.0
+    },
+    "census_by_split": {
+      "train": {
+        "QSO": 88253,
+        "GALAXY": 15232
+      },
+      "val": {
+        "QSO": 11079,
+        "GALAXY": 1856
+      },
+      "test": {
+        "QSO": 11070,
+        "GALAXY": 1866
+      }
+    },
+    "sample_census": {
+      "QSO": 110402,
+      "GALAXY": 18954
+    },
+    "cutout_dir": "/h/rditella/aion-flow_v2/data/work/cutouts",
+    "outputs": {
+      "manifest": {
+        "path": "/h/rditella/aion-flow_v2/data/work/manifest.csv",
+        "bytes": 25314282,
+        "sha256": "7348523f3123435d72166dc0698463698d502c4b29087c0c2475f1c6d50dc921"
+      },
+      "split": {
+        "path": "/h/rditella/aion-flow_v2/data/work/split.csv",
+        "bytes": 3065942,
+        "sha256": "d426c3f5dd3af1672c072b602d826ad76029e7c73155d574dfcab68ffe4e57dc"
+      }
+    }
+  }
+}

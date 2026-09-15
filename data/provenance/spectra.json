@@ -1,0 +1,53 @@
+{
+  "step": "spectra",
+  "written_utc": "2026-09-12T13:36:14+00:00",
+  "config": {
+    "path": "/h/rditella/aion-flow_v2/config.yaml",
+    "sha256": "db11ece025587349bffb903e637b3a5d7b13ce5aa40bf9bcb21ca66a9c2d87ef"
+  },
+  "inputs": {
+    "crossmatch": {
+      "path": "/h/rditella/aion-flow_v2/data/work/crossmatch.parquet",
+      "bytes": 19149692,
+      "sha256": "abf3a103b2e63ab929ec6d09531f6c74410cf50d1ca98b2b7ed42e08336db620"
+    }
+  },
+  "counts": {
+    "targets": 131312,
+    "coadd_groups": 9471,
+    "spectra_merged": 131312,
+    "targets_without_spectrum": 0,
+    "absent_coadds": 0
+  },
+  "filters": [],
+  "extra": {
+    "coadd_url_template": "https://data.desi.lbl.gov/public/dr1/spectro/redux/iron/healpix/{survey}/{program}/{group}/{pix}/coadd-{survey}-{program}-{pix}.fits",
+    "grid": {
+      "lam0_angstrom": 3600.0,
+      "dlam_angstrom": 0.8,
+      "nbin": 7781
+    },
+    "fetch": {
+      "groups": 9471,
+      "shards_present_before": 9469,
+      "groups_fetched": 2,
+      "spectra_fetched": 81,
+      "absent_coadds": 0,
+      "transient_failures": 0,
+      "absent": [],
+      "failed": []
+    },
+    "merge": {
+      "shards": 9471,
+      "rows": 131312,
+      "unique_targets": 131312,
+      "duplicates_dropped": 0
+    },
+    "limit_groups": null,
+    "output": {
+      "path": "/h/rditella/aion-flow_v2/data/work/spectra/source.h5",
+      "bytes": 8159415608,
+      "sha256": "a824c0bd8dac0ce1715612d641e65dacf65689b1bb6e68d11d02f74e8988fcaa"
+    }
+  }
+}

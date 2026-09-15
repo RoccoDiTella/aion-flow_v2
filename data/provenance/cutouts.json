@@ -1,0 +1,36 @@
+{
+  "step": "cutouts",
+  "written_utc": "2026-09-15T03:44:43+00:00",
+  "config": {
+    "path": "/h/rditella/aion-flow_v2/config.yaml",
+    "sha256": "db11ece025587349bffb903e637b3a5d7b13ce5aa40bf9bcb21ca66a9c2d87ef"
+  },
+  "inputs": {
+    "crossmatch": {
+      "path": "/h/rditella/aion-flow_v2/data/work/crossmatch.parquet",
+      "bytes": 18837653,
+      "sha256": "d05163afc87715d101f1a9292a165536f67fc24a36921781076a9f8cb9ddd67f"
+    }
+  },
+  "counts": {
+    "targets": 131312,
+    "present_before": 5,
+    "to_fetch": 131307,
+    "fetched": 131307,
+    "failed": 0,
+    "present_after": 131312
+  },
+  "filters": [],
+  "extra": {
+    "url_template": "https://www.legacysurvey.org/viewer/fits-cutout?ra={ra:.6f}&dec={dec:.6f}&layer={layer}&pixscale={pixscale}&size={size}&bands={bands}",
+    "cutout": {
+      "layer": "ls-dr10",
+      "pixscale": 0.262,
+      "size": 160,
+      "bands": "griz"
+    },
+    "limit": null,
+    "failures": [],
+    "failures_listed": 0
+  }
+}

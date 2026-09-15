@@ -1,0 +1,126 @@
+{
+  "step": "line_features",
+  "written_utc": "2026-09-15T05:27:20+00:00",
+  "config": {
+    "path": "/h/rditella/aion-flow_v2/config.yaml",
+    "sha256": "db11ece025587349bffb903e637b3a5d7b13ce5aa40bf9bcb21ca66a9c2d87ef"
+  },
+  "inputs": {
+    "manifest": {
+      "path": "/h/rditella/aion-flow_v2/data/work/manifest.csv",
+      "bytes": 25314282,
+      "sha256": "7348523f3123435d72166dc0698463698d502c4b29087c0c2475f1c6d50dc921"
+    },
+    "spectra_source": {
+      "path": "/h/rditella/aion-flow_v2/data/work/spectra/source.h5",
+      "bytes": 8159415608,
+      "sha256": "a824c0bd8dac0ce1715612d641e65dacf65689b1bb6e68d11d02f74e8988fcaa"
+    }
+  },
+  "counts": {
+    "sample_rows": 129356,
+    "spectra_fitted": 109160,
+    "fits": 236003,
+    "oiii_5007_measured": 51628,
+    "oiii_5007_in_window": 52198,
+    "nev_3426_measured": 107242,
+    "nev_3426_in_window": 107918,
+    "halpha_measured": 19236,
+    "halpha_in_window": 19294,
+    "hbeta_measured": 56013,
+    "hbeta_in_window": 56593
+  },
+  "filters": [],
+  "extra": {
+    "lines": {
+      "oiii": {
+        "stem": "oiii_5007",
+        "window": [
+          4920.0,
+          5080.0
+        ],
+        "primary": [
+          "oiii",
+          5008.24
+        ]
+      },
+      "nev": {
+        "stem": "nev_3426",
+        "window": [
+          3360.0,
+          3500.0
+        ],
+        "primary": [
+          "nev",
+          3426.85
+        ]
+      },
+      "halpha": {
+        "stem": "halpha",
+        "window": [
+          6480.0,
+          6650.0
+        ],
+        "primary": [
+          "ha",
+          6564.614
+        ]
+      },
+      "hbeta": {
+        "stem": "hbeta",
+        "window": [
+          4770.0,
+          4940.0
+        ],
+        "primary": [
+          "hb",
+          4862.683
+        ]
+      }
+    },
+    "coverage_angstrom": [
+      3600.0,
+      9824.0
+    ],
+    "status_counts": {
+      "oiii_5007": {
+        "not_in_window": 77092,
+        "ok": 51628,
+        "window_ivar": 570,
+        "no_redshift": 66
+      },
+      "nev_3426": {
+        "ok": 107242,
+        "not_in_window": 21372,
+        "window_ivar": 676,
+        "no_redshift": 66
+      },
+      "halpha": {
+        "not_in_window": 109996,
+        "ok": 19236,
+        "no_redshift": 66,
+        "window_ivar": 58
+      },
+      "hbeta": {
+        "not_in_window": 72697,
+        "ok": 56013,
+        "window_ivar": 580,
+        "no_redshift": 66
+      }
+    },
+    "nproc": 16,
+    "limit": null,
+    "outputs": {
+      "features": {
+        "path": "/h/rditella/aion-flow_v2/data/work/line_features.csv",
+        "bytes": 25428204,
+        "sha256": "1a483bff64976aae8508fa2b8a3e20778db2fbe3a5757b7be6f5671e23dbeb4f"
+      },
+      "fits": {
+        "path": "/h/rditella/aion-flow_v2/data/work/line_fits.csv",
+        "bytes": 62045903,
+        "sha256": "8c50ee78c1f77d0e3abe7a15197d16e9dc8e32355bd83efc5f8da9536e8e96c4"
+      }
+    }
+  }
+}

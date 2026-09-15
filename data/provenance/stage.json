@@ -1,0 +1,53 @@
+{
+  "step": "stage",
+  "written_utc": "2026-09-15T05:27:41+00:00",
+  "config": {
+    "path": "/h/rditella/aion-flow_v2/config.yaml",
+    "sha256": "db11ece025587349bffb903e637b3a5d7b13ce5aa40bf9bcb21ca66a9c2d87ef"
+  },
+  "inputs": {
+    "manifest": {
+      "path": "/h/rditella/aion-flow_v2/data/work/manifest.csv",
+      "bytes": 25314282,
+      "sha256": "7348523f3123435d72166dc0698463698d502c4b29087c0c2475f1c6d50dc921"
+    },
+    "spectra_source": {
+      "path": "/h/rditella/aion-flow_v2/data/work/spectra/source.h5",
+      "bytes": 8159415608,
+      "sha256": "a824c0bd8dac0ce1715612d641e65dacf65689b1bb6e68d11d02f74e8988fcaa"
+    }
+  },
+  "counts": {
+    "sample_rows": 129356,
+    "rows_train": 103485,
+    "rows_val": 12935,
+    "rows_test": 12936
+  },
+  "filters": [],
+  "extra": {
+    "image_bands": [
+      "DES-G",
+      "DES-R",
+      "DES-I",
+      "DES-Z"
+    ],
+    "image_size": 160,
+    "outputs": {
+      "train": {
+        "path": "/h/rditella/aion-flow_v2/data/staged/train.h5",
+        "bytes": 48087598044,
+        "sha256": "4fa359a6f65d8d1f7f8d52e776b2a276ee5588c8b6f3c8acc5e7336ac43c55b7"
+      },
+      "val": {
+        "path": "/h/rditella/aion-flow_v2/data/staged/val.h5",
+        "bytes": 6010427897,
+        "sha256": "3e57c6e2db554ed1c878ad7cff4959897803ac0ed39334f83f09b068e26d15da"
+      },
+      "test": {
+        "path": "/h/rditella/aion-flow_v2/data/staged/test.h5",
+        "bytes": 6010360140,
+        "sha256": "c038a27c661b6f1bc42277591c6946238269a630a4771e182bbf33c4a5583dc7"
+      }
+    }
+  }
+}
