@@ -15,6 +15,7 @@ from aionflow_model.objective import (
     SUBSET_NAMES,
     SUBSETS,
     Model,
+    axes_for,
     batch_loss,
     head_log_likelihood,
     observed,
@@ -191,6 +192,45 @@ def test_a_mixed_joint_skips_sources_with_no_observed_scalar(standardizer):
     values, keep = head_log_likelihood(mixed, UnitNormal(), context, batch, standardizer)
     assert not keep[1] and values[1] == 0.0
     assert keep.sum() == 5
+
+
+def test_the_node_count_moves_a_rate_head_and_leaves_a_pinned_one_alone(standardizer):
+    """A trained checkpoint can be rescored on a finer grid, which is how we find out
+    whether K = 12 is converged for a flow that is not a standard normal.
+
+    A scalar head is pinned rather than integrated, so refining the grid must change
+    it by exactly nothing; if it moved, the pinned path would be integrating something.
+    """
+    batch = a_batch()
+    context = torch.zeros(6, 1, dtype=torch.float64)
+
+    # a purely pinned head: every scored row has its label, so nothing is integrated
+    scalar = Head("lx", ("lx",))
+    coarse, keep = head_log_likelihood(scalar, UnitNormal(), context, batch, standardizer, 12)
+    fine, _ = head_log_likelihood(scalar, UnitNormal(), context, batch, standardizer, 48)
+    assert keep.sum() == 5 and torch.equal(coarse, fine)
+
+    # a joint still integrates a dimension it is missing, so those rows do move
+    joint = Head("sfr_mstar", ("sfr", "mstar"))
+    coarse, _ = head_log_likelihood(joint, UnitNormal(), context, batch, standardizer, 12)
+    fine, _ = head_log_likelihood(joint, UnitNormal(), context, batch, standardizer, 48)
+    both_seen = batch["y_ok"][:, SCALAR_TARGETS.index("sfr")] & batch["y_ok"][
+        :, SCALAR_TARGETS.index("mstar")]
+    assert torch.equal(coarse[both_seen], fine[both_seen])       # pinned, so identical
+    assert not torch.equal(coarse[~both_seen], fine[~both_seen])  # integrated, so not
+
+    rates = Head("rates", RATE_TARGETS)
+    coarse, _ = head_log_likelihood(rates, UnitNormal(), context, batch, standardizer, 12)
+    fine, _ = head_log_likelihood(rates, UnitNormal(), context, batch, standardizer, 48)
+    assert not torch.equal(coarse, fine)
+    # against a smooth density K = 12 is already close, which is what buys the default
+    assert torch.allclose(coarse, fine, atol=1e-3)
+
+    # and the grids really are the sizes asked for
+    seen = observed(rates, batch)
+    rows = torch.tensor([0])
+    assert [a.size for a in axes_for(rates, batch, rows, seen[0], standardizer, 12)] == [12, 12]
+    assert [a.size for a in axes_for(rates, batch, rows, seen[0], standardizer, 48)] == [48, 48]
 
 
 def test_a_row_with_nothing_observed_is_not_scored(standardizer):

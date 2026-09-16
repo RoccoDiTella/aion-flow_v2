@@ -33,7 +33,7 @@ from .config import Head, Run
 from .data import MODALITIES, RATE_TARGETS, SCALAR_TARGETS, TARGETS, Standardizer
 from .encoder import Probe
 from .flows import FlowHead
-from .poisson import log_marginal, pinned, prior_axis, rate_axis
+from .poisson import K, log_marginal, pinned, prior_axis, rate_axis
 
 
 def subsets() -> Tensor:
@@ -79,11 +79,13 @@ class Heads(nn.Module):
     def contexts(self, batch: dict, mask: Tensor) -> dict[str, Tensor]:
         raise NotImplementedError
 
-    def log_likelihood(self, batch: dict, mask: Tensor) -> dict[str, tuple[Tensor, Tensor]]:
+    def log_likelihood(self, batch: dict, mask: Tensor,
+                       nodes: int = K) -> dict[str, tuple[Tensor, Tensor]]:
         """Per head, the per-row log likelihood and which rows it can score."""
         contexts = self.contexts(batch, mask)
         return {head.name: head_log_likelihood(head, self.flows[head.name],
-                                               contexts[head.name], batch, self.standardizer)
+                                               contexts[head.name], batch,
+                                               self.standardizer, nodes)
                 for head in self.run.heads}
 
 
@@ -165,25 +167,33 @@ def scorable_rows(run: Run, split) -> dict[str, int]:
 
 
 def axes_for(head: Head, batch: dict, rows: Tensor, seen: Tensor,
-             standardizer: Standardizer) -> list:
-    """The quadrature axes of one group of rows, which share an observation pattern."""
+             standardizer: Standardizer, nodes: int = K) -> list:
+    """The quadrature axes of one group of rows, which share an observation pattern.
+
+    `nodes` is K, the paper's 12. It is an argument only so a trained checkpoint can
+    be rescored on a finer grid: the quadrature reproduces a dense integral to 1e-4
+    nats against a standard normal, but a trained flow is not a standard normal and
+    could put mass between the nodes, and the only way to find out is to look.
+    """
     out = []
     for d, target in enumerate(head.targets):
         kind = TARGETS[target].kind
         if not bool(seen[d]):
-            out.append(prior_axis(int(rows.numel()), device=batch["y"].device))
+            out.append(prior_axis(int(rows.numel()), k=nodes, device=batch["y"].device))
         elif kind == "scalar":
             out.append(pinned(batch["y"][rows, SCALAR_TARGETS.index(target)]))
         else:
             j = RATE_TARGETS.index(target)
             out.append(rate_axis(batch["counts"][rows, j], batch["bkg"][rows, j],
                                  batch["expo"][rows, j],
-                                 standardizer.mean[target], standardizer.scale[target]))
+                                 standardizer.mean[target], standardizer.scale[target],
+                                 k=nodes))
     return out
 
 
 def head_log_likelihood(head: Head, flow: FlowHead, context: Tensor, batch: dict,
-                        standardizer: Standardizer) -> tuple[Tensor, Tensor]:
+                        standardizer: Standardizer,
+                        nodes: int = K) -> tuple[Tensor, Tensor]:
     """log p of a head's targets per row, and the rows it is trained on."""
     seen = observed(head, batch)
     keep = scorable(head, batch)
@@ -191,7 +201,7 @@ def head_log_likelihood(head: Head, flow: FlowHead, context: Tensor, batch: dict
     patterns = torch.unique(seen[keep], dim=0) if bool(keep.any()) else seen[:0]
     for pattern in patterns:
         rows = torch.nonzero((seen == pattern).all(dim=1) & keep, as_tuple=True)[0]
-        axes = axes_for(head, batch, rows, pattern, standardizer)
+        axes = axes_for(head, batch, rows, pattern, standardizer, nodes)
         here = context[rows]
         out = out.index_put((rows,), log_marginal(
             axes, lambda u, c=here: flow.log_prob(u.to(c.dtype), c).to(torch.float64)))

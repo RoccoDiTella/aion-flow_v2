@@ -56,6 +56,7 @@ from .data import (
 )
 from .flows import GaussianKDE
 from .objective import SUBSET_NAMES, SUBSETS, Heads, Model, head_log_likelihood, observed
+from .poisson import K
 from .train import CHECKPOINT, chunks, to_device
 
 RESULTS = "results.json"
@@ -114,7 +115,7 @@ def common_subsample(head: Head, split: Split) -> np.ndarray:
 
 @torch.no_grad()
 def score(model: Heads, batches, mask_row: torch.Tensor, device, chunk: int, draws: int,
-          keep_draws: bool = False) -> dict[str, dict[str, np.ndarray]]:
+          keep_draws: bool = False, nodes: int = K) -> dict[str, dict[str, np.ndarray]]:
     """Per head, the log likelihood and the posterior mean of every row, under one
     combination held fixed across sources. The draws themselves are kept only for the
     combination coverage is reported on, since they are the largest thing here."""
@@ -128,7 +129,7 @@ def score(model: Heads, batches, mask_row: torch.Tensor, device, chunk: int, dra
             for head in model.run.heads:
                 flow = model.flows[head.name]
                 values, _ = head_log_likelihood(head, flow, contexts[head.name], part,
-                                                model.standardizer)
+                                                model.standardizer, nodes)
                 sample = flow.sample(contexts[head.name], draws)
                 out[head.name]["ll"].append(values.cpu().numpy())
                 out[head.name]["mean"].append(sample.mean(dim=1).cpu().numpy())
@@ -174,7 +175,7 @@ def coverage(head: Head, sample: np.ndarray, split: Split, standardizer: Standar
 
 def evaluate(model: Heads, splits: dict[str, Split], *, device: str = "cpu",
              chunk: int = 448, draws: int = DRAWS, workers: int = 0, dataset=None,
-             log=print) -> tuple[dict, pd.DataFrame]:
+             nodes: int = K, log=print) -> tuple[dict, pd.DataFrame]:
     """`dataset` defaults to the staged tokens; the baseline passes its own, so both
     are scored against the same prior on the same common subsample."""
     test, train = splits["test"], splits["train"]
@@ -195,7 +196,7 @@ def evaluate(model: Heads, splits: dict[str, Split], *, device: str = "cpu",
             for part in chunks(batch, chunk):
                 got, _ = head_log_likelihood(head, PriorHead(priors[head.name]),
                                              torch.zeros(part["y"].shape[0], 1, device=device),
-                                             part, standardizer)
+                                             part, standardizer, nodes)
                 values.append(got.cpu().numpy())
         prior_ll[head.name] = np.concatenate(values)
         frame[f"prior_{head.name}"] = prior_ll[head.name]
@@ -205,7 +206,7 @@ def evaluate(model: Heads, splits: dict[str, Split], *, device: str = "cpu",
     for g, name in enumerate(SUBSET_NAMES):
         last = name == SUBSET_NAMES[-1]         # coverage is reported on all four modalities
         scored = score(model, loader(dataset, 512, shuffle=False, workers=workers),
-                       SUBSETS[g], device, chunk, draws, keep_draws=last)
+                       SUBSETS[g], device, chunk, draws, keep_draws=last, nodes=nodes)
         for head in model.run.heads:
             here, mask = scored[head.name], keep[head.name]
             frame[f"ll_{head.name}_{name}"] = here["ll"]
@@ -218,7 +219,7 @@ def evaluate(model: Heads, splits: dict[str, Split], *, device: str = "cpu",
                 cover[head.name] = coverage(head, here["draws"], test, standardizer, mask)
         log(f"[evaluate] {name:5s} " + "  ".join(
             f"{r['head']} {r['information_gain']:+.3f}" for r in rows[-len(model.run.heads):]))
-    results = {"run": model.run.name, "draws": draws,
+    results = {"run": model.run.name, "draws": draws, "quadrature_nodes": nodes,
                "common_subsample": {k: int(v.sum()) for k, v in keep.items()},
                "prior": "Gaussian KDE at Scott's bandwidth on the training split, "
                         "scored through the same quadrature as the model",
@@ -228,7 +229,7 @@ def evaluate(model: Heads, splits: dict[str, Split], *, device: str = "cpu",
 
 def run(cfg: dict, run_dir: str | Path, *, device: str = "cpu", chunk: int = 448,
         draws: int = DRAWS, workers: int = 0, baseline: bool = False, backbone=None,
-        log=print) -> dict:
+        nodes: int = K, results_name: str = RESULTS, log=print) -> dict:
     run_dir = Path(run_dir)
     if not (run_dir / CHECKPOINT).is_file():
         raise EvaluateError(f"no checkpoint at {run_dir / CHECKPOINT}")
@@ -252,13 +253,13 @@ def run(cfg: dict, run_dir: str | Path, *, device: str = "cpu", chunk: int = 448
             model.eval()
             dataset = None
         results, frame = evaluate(model, splits, device=device, chunk=chunk, draws=draws,
-                                  workers=workers, dataset=dataset, log=log)
+                                  workers=workers, dataset=dataset, nodes=nodes, log=log)
     finally:
         for split in splits.values():
             split.close()
-    (run_dir / RESULTS).write_text(json.dumps(results, indent=1) + "\n")
+    (run_dir / results_name).write_text(json.dumps(results, indent=1) + "\n")
     frame.to_csv(run_dir / PER_SOURCE, index=False)
-    log(f"[evaluate] {len(results['rows'])} rows -> {run_dir / RESULTS}")
+    log(f"[evaluate] {len(results['rows'])} rows -> {run_dir / results_name}")
     return results
 
 
@@ -272,10 +273,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--baseline", action="store_true",
                         help="the run directory holds an emission-line baseline")
+    parser.add_argument("--nodes", type=int, default=K,
+                        help=f"quadrature nodes per axis (default {K}, the paper's K); "
+                             f"raising it rescores a checkpoint on a finer grid")
+    parser.add_argument("--results-name", default=RESULTS,
+                        help="write the table here instead, to keep a rescoring separate")
     args = parser.parse_args(argv)
     try:
         run(load_config(args.config), args.run_dir, device=args.device, chunk=args.chunk,
-            draws=args.draws, workers=args.workers, baseline=args.baseline)
+            draws=args.draws, workers=args.workers, baseline=args.baseline,
+            nodes=args.nodes, results_name=args.results_name)
     except (EvaluateError, OSError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
