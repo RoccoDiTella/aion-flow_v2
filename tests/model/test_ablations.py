@@ -11,10 +11,15 @@ from torch import nn
 
 from aionflow_model.ablations import (
     ARMS,
+    LR_BACKBONE,
+    POOLING_ARMS,
+    WD_BACKBONE,
     AblationError,
     AttentivePool,
+    Finetuned,
     MeanPool,
     build,
+    default_recipe,
     frozen_tokens,
     modality_index,
     randomize_encoder,
@@ -76,7 +81,7 @@ def test_build_rejects_an_arm_the_paper_does_not_have(standardizer, pooling):
     assert isinstance(build("cls", a_backbone(), pooling, standardizer), Model)
     with pytest.raises(AblationError, match="unknown arm 'cosine'"):
         build("cosine", a_backbone(), pooling, standardizer)
-    assert set(ARMS) == {"cls", "attentive", "mean"}       # no four-token, no cosine
+    assert set(ARMS) == {"cls", "attentive", "mean", "finetune"}   # no four-token, no cosine
 
 
 def test_the_main_path_never_imports_the_ablations():
@@ -180,8 +185,8 @@ def test_the_random_encoder_keeps_the_architecture_and_loses_the_pretraining():
 
 # ----------------------------------------------------------------------------- end to end
 
-@pytest.mark.parametrize("arm", ARMS)
-def test_each_arm_trains_on_the_fixtures(staged, tmp_path, arm):
+@pytest.mark.parametrize("arm", POOLING_ARMS)
+def test_each_pooling_arm_trains_on_the_fixtures(staged, tmp_path, arm):
     cfg, _, _ = staged
     result = ablation_run(cfg, tmp_path / arm, arm=arm, chunk=8, max_epochs=1,
                           backbone=a_backbone(), **QUIET)
@@ -206,3 +211,138 @@ def test_the_control_sees_every_modality(staged, tmp_path):
                                     Standardizer.read(tmp_path / "control"
                                                       / "standardizer.json")).parameters()
         if p.requires_grad)
+
+
+# ---------------------------------------------------------------------------- finetune
+
+def a_pair(standardizer, recipe):
+    """The reported model and the finetuning arm at identical weights.
+
+    Separate backbones on purpose: `Probe.__init__` freezes the module it is given
+    and `FinetunedProbe.__init__` unfreezes it, so two models sharing one backbone
+    would have the later one decide for both.
+    """
+    frozen = Model(a_backbone(), recipe, standardizer).eval()
+    tuned = Finetuned(a_backbone(), recipe, standardizer).eval()
+    tuned.load_state_dict(frozen.state_dict())
+    return frozen, tuned
+
+
+def a_mask(rows=3):
+    return torch.ones(rows, len(MODALITIES), dtype=torch.bool)
+
+
+def test_the_finetune_reads_exactly_what_the_frozen_probe_reads(standardizer, pooling):
+    """`FinetunedProbe.context` is `Probe.context` with the three no_grad blocks gone,
+    so at identical weights the two must agree to the bit. This is what stops the copy
+    drifting if the reported model ever changes, and it says the recomputation and the
+    removed no_grad are not quietly arithmetic."""
+    torch.manual_seed(0)
+    frozen, tuned = a_pair(standardizer, pooling)
+    batch = a_batch(rows=3)
+    with torch.no_grad():
+        want = frozen.probe.context(batch, a_mask())
+        got = tuned.probe.context(batch, a_mask())
+    assert torch.equal(want, got)
+
+
+def test_the_encoder_gets_a_gradient_here_and_nowhere_else(standardizer, pooling):
+    torch.manual_seed(0)
+    frozen, tuned = a_pair(standardizer, pooling)
+    batch, mask = a_batch(rows=2), a_mask(2)
+
+    tuned.probe.context(batch, mask).square().sum().backward()
+    grads = [p.grad for p in tuned.probe.backbone.parameters()]
+    assert grads and all(g is not None for g in grads), "every encoder weight moved"
+    assert sum(float(g.abs().sum()) for g in grads) > 0
+
+    frozen.probe.context(batch, mask).square().sum().backward()
+    assert all(p.grad is None for p in frozen.probe.backbone.parameters())
+    assert frozen.probe.cls.grad is not None, "the read still trains"
+
+
+def test_recomputing_the_blocks_does_not_change_the_gradient(standardizer, pooling):
+    """Gradient checkpointing is what makes the arm affordable, and it is only ever
+    worth having if it is exactly the same gradient."""
+    torch.manual_seed(0)
+    _, stored = a_pair(standardizer, pooling)
+    _, recomputed = a_pair(standardizer, pooling)
+    recomputed.load_state_dict(stored.state_dict())
+    stored.probe.checkpointing = False
+    assert recomputed.probe.checkpointing is True
+
+    batch, mask = a_batch(rows=2), a_mask(2)
+    for model in (stored, recomputed):
+        model.probe.context(batch, mask).square().sum().backward()
+    other = dict(recomputed.named_parameters())
+    compared = 0
+    for name, a in stored.named_parameters():
+        b = other[name]
+        assert (a.grad is None) == (b.grad is None), name
+        if a.grad is not None:
+            assert torch.allclose(a.grad, b.grad, atol=1e-6), name
+            compared += 1
+    # context() does not reach the heads, so the flows and readouts have no gradient
+    assert compared == len(list(stored.probe.backbone.parameters())) + 1 + len(
+        list(stored.probe.reads.parameters()))
+
+
+def test_the_encoder_gets_its_own_rate_and_its_norms_are_not_decayed(standardizer,
+                                                                     pooling):
+    """3e-4 on 314M pretrained weights is a way to destroy them, and decaying a
+    pretrained LayerNorm gain pulls the encoder off its own scale."""
+    torch.manual_seed(0)
+    tuned = Finetuned(a_backbone(), pooling, standardizer)
+    groups = tuned.parameter_groups(TRAINING)
+    assert [(g["lr"], g["weight_decay"]) for g in groups] == [
+        (3e-4, 1e-4),                 # the readouts
+        (3e-4, 0.0),                  # the CLS token
+        (1e-3, 1e-4),                 # the flows
+        (3e-5, 0.1),                  # the read adapters
+        (LR_BACKBONE, WD_BACKBONE),   # the encoder's weights
+        (LR_BACKBONE, 0.0),           # and its norms
+    ]
+    assert sum(len(g["params"]) for g in groups) == len(
+        [p for p in tuned.parameters() if p.requires_grad])
+    assert all(p.ndim == 1 for p in groups[-1]["params"])
+    assert all(p.ndim >= 2 for p in groups[-2]["params"])
+
+
+def test_the_backbone_stays_in_eval_so_only_requires_grad_changes(standardizer, pooling):
+    """Train mode would turn on dropout and drop-path as well, and then the arm would
+    differ from the reported run in more than the one thing it is meant to test."""
+    torch.manual_seed(0)
+    tuned = Finetuned(a_backbone(), pooling, standardizer)
+    tuned.train()
+    assert tuned.training and not tuned.probe.backbone.training
+
+
+def test_the_finetune_is_measured_against_a_reported_run(standardizer):
+    """It needs no frozen reference of its own: marginals is already being trained."""
+    assert default_recipe("finetune").stem == "marginals"
+    assert default_recipe("mean").stem == "pooling"
+    assert load_run(default_recipe("finetune")).name == "marginals"
+
+
+def test_the_finetune_trains_on_the_fixtures(staged, tmp_path):
+    """End to end through `fit`: the unfrozen encoder, the recomputed blocks and the
+    checkpoint that now has to carry the backbone."""
+    cfg, _, _ = staged
+    result = ablation_run(cfg, tmp_path / "ft", arm="finetune", chunk=8, max_epochs=1,
+                          recipe="configs/pooling.yaml", lr_backbone=1e-4,
+                          backbone=a_backbone(), **QUIET)
+    assert result["best"]["epoch"] == 0
+    choices = json.loads((tmp_path / "ft" / "choices.json").read_text())
+    assert choices["ablation_arm"] == "finetune"
+    assert choices["lr_backbone"] == 1e-4 and choices["wd_backbone"] == WD_BACKBONE
+    assert "codecs are frozen" in choices["finetunes"]
+    assert "finetuning ceiling" in choices["note"]
+
+    saved = torch.load(tmp_path / "ft" / "best.pt", weights_only=False)["model"]
+    pretrained = a_backbone().state_dict()
+    encoder = {k[len("probe.backbone."):]: v for k, v in saved.items()
+               if k.startswith("probe.backbone.")}
+    assert encoder, "the checkpoint carries the encoder"
+    moved = [k for k, v in encoder.items()
+             if k in pretrained and not torch.equal(v, pretrained[k])]
+    assert moved, "and the encoder it carries is not the one we started from"

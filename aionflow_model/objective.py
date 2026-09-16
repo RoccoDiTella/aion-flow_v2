@@ -92,11 +92,15 @@ class Heads(nn.Module):
 class Model(Heads):
     """The probe and one flow per head."""
 
+    # Subclassed by the ablation arms to read the encoder differently. Nothing in the
+    # main path ever sets it to anything but the read-only probe.
+    probe_class = Probe
+
     def __init__(self, backbone, run: Run, standardizer: Standardizer):
         super().__init__()
         self.run = run
         self.standardizer = standardizer
-        self.probe = Probe(backbone, run)
+        self.probe = self.probe_class(backbone, run)
         self.flows = nn.ModuleDict({head.name: FlowHead(len(head.targets))
                                     for head in run.heads})
 

@@ -17,11 +17,29 @@ modalities always present."
     python -m aionflow_model.ablations --arm attentive --out runs/pool-attentive
     python -m aionflow_model.ablations --arm cls --out runs/pool-cls
 
+A fourth arm is not from the appendix. The pooling arms all vary how a fixed
+representation is read, and the random encoder pins the floor of what the
+pretrained weights are worth; none of them pins the ceiling. `--arm finetune`
+does, by unfreezing the encoder under the reported probe:
+
+    python -m aionflow_model.ablations --arm finetune --out runs/finetune \
+        --lr-backbone 1e-5 --device cuda
+
+It is the same model as the reported run - same CLS token, same rank-64 read
+deltas, same readouts, flows, recipe, split, schedule and seed - differing in
+whether the backbone had a gradient, so what separates the two is that and not
+capacity. It answers the question a reader asks first: how much of this is AION
+and how much is the probe. Two honest limits. The codecs are frozen and the
+tokens precomputed, so it finetunes the encoder and never the tokenizer. And the
+encoder needs its own learning rate, because the paper's were tuned for a
+6.8M-parameter probe.
+
 The main path never imports this module: `Model` is the one architecture the
 package trains, and these arms exist to say what is lost by reading the encoder
-differently. Only the two comparisons that test a claim are here. The four-token
-and cosine-schedule grid of the same appendix is a hyperparameter search rather
-than an architecture claim, and is deliberately absent.
+differently, or gained by letting it move. Only the comparisons that test a
+claim are here. The four-token and cosine-schedule grid of the same appendix is
+a hyperparameter search rather than an architecture claim, and is deliberately
+absent.
 
 "Bare" is the load-bearing word in "a bare attentive probe": one query, one head,
 cross-attention only. No self-attention among queries, no feed-forward, no second
@@ -40,18 +58,23 @@ from pathlib import Path
 
 import torch
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint
 
 from aionflow_data.common import load_config
 
-from .config import TRAINING, load_run, recipe_path
+from .config import TRAINING, Run, load_run, recipe_path
 from .data import MODALITIES, TOKEN_KEYS, Split, Standardizer, TokenDataset
-from .encoder import backbone_width, readout, token_inputs
+from .encoder import RANK, Probe, backbone_width, readout, token_inputs
 from .flows import FlowHead
 from .objective import Heads, Model
 from .train import fit, validation_masks
 
-ARMS = ("cls", "attentive", "mean")
+POOLING_ARMS = ("cls", "attentive", "mean")    # Appendix B's comparison
+ARMS = POOLING_ARMS + ("finetune",)
 RECIPE = recipe_path("pooling")
+# The finetune is measured against a reported run, not against the pooling arms,
+# so it defaults to that run's recipe and needs no frozen reference of its own.
+FINETUNE_RECIPE = recipe_path("marginals")
 
 
 class AblationError(RuntimeError):
@@ -157,6 +180,99 @@ class AttentivePool(Pooled):
         return self.proj((logits.softmax(-1) @ v).squeeze(1))
 
 
+# ------------------------------------------------------------------------ the finetune
+
+LR_BACKBONE = 1e-5
+WD_BACKBONE = 0.01
+
+
+class FinetunedProbe(Probe):
+    """The reported probe over an encoder that is allowed to move.
+
+    The read-only probe runs the data stream under `no_grad`, so what the readouts
+    see is AION's representation exactly. Unfreeze it and that stops being true: the
+    arm is a finetune of the encoder, read by the same probe, and it is the ceiling
+    the frozen claim is measured against. Nothing else changes - same CLS token, same
+    rank-64 read deltas, same readouts, same flows - so the comparison against the
+    reported run turns on one thing, whether the backbone had a gradient.
+
+    Two things it is deliberately not. The backbone stays in eval, so dropout and
+    drop-path are off exactly as they are when it is frozen and the only variable is
+    still `requires_grad`. And the codecs are outside this: tokens are precomputed by
+    frozen codecs, so this finetunes the encoder and never the tokenizer, which
+    bounds what "full" can mean here and belongs in the paper.
+    """
+
+    def __init__(self, backbone, run: Run, rank: int = RANK, checkpointing: bool = True):
+        super().__init__(backbone, run, rank)
+        self.backbone.requires_grad_(True)
+        self.checkpointing = checkpointing
+
+    def advance(self, block, x: Tensor, token_mask: Tensor) -> Tensor:
+        """One block of the data stream, recomputed rather than stored for backward.
+
+        Keeping twelve blocks of activations for 853 tokens is what would make this
+        arm unaffordable; storing the block boundaries and recomputing the insides
+        costs about a third more compute and lets it run at the frozen runs' chunk,
+        which is what makes the two comparable at all.
+        """
+        if not self.checkpointing or not torch.is_grad_enabled():
+            return block(x, mask=token_mask)
+        return checkpoint(lambda t: block(t, mask=token_mask), x, use_reentrant=False)
+
+    def context(self, batch: dict, mask: Tensor) -> Tensor:
+        """`Probe.context` with the three `no_grad` blocks removed.
+
+        Deliberately a copy rather than a hook in the main path: the frozen probe is
+        the reported model and should not carry a branch only this file takes. A test
+        pins the two against each other at identical weights, so the copy cannot
+        drift without the suite saying so.
+        """
+        tokens, hidden, needed = self.inputs(batch, mask)
+        x, emb, token_mask, _ = self.backbone.embed_inputs(
+            tokens, mask=hidden, num_encoder_tokens=needed)
+        x = x + emb
+        cls = self.cls.to(x.dtype).expand(x.shape[0], 1, -1)
+        for block, read in zip(self.backbone.encoder, self.reads):
+            x_hat = block.norm1(x)
+            cls = cls + block.drop_path(read(block, block.norm1(cls), x_hat, token_mask))
+            cls = cls + block.drop_path(block.mlp(block.norm2(cls)))
+            x = self.advance(block, x, token_mask)
+        return self.backbone.encoder_norm(cls).squeeze(1)
+
+
+class Finetuned(Model):
+    """The reported model with the encoder unfrozen."""
+
+    probe_class = FinetunedProbe
+
+    def __init__(self, backbone, run, standardizer: Standardizer,
+                 lr_backbone: float = LR_BACKBONE, wd_backbone: float = WD_BACKBONE):
+        super().__init__(backbone, run, standardizer)
+        self.lr_backbone = lr_backbone
+        self.wd_backbone = wd_backbone
+
+    def parameter_groups(self, training) -> list[dict]:
+        """The paper's four groups, and two more for the encoder.
+
+        The encoder gets its own learning rate because the paper's rates were tuned
+        for a 6.8M-parameter probe and 3e-4 on 314M pretrained weights is a way to
+        destroy them. Norms and any one-dimensional weight are not decayed, which is
+        the usual rule and matters more here than anywhere else in the model: decaying
+        a pretrained LayerNorm gain pulls the encoder off its own scale.
+        """
+        groups = super().parameter_groups(training)
+        decayed, undecayed = [], []
+        for p in self.probe.backbone.parameters():
+            (decayed if p.ndim >= 2 else undecayed).append(p)
+        if not decayed:
+            raise AblationError("the backbone has no trainable weight; it is still frozen")
+        return groups + [
+            {"params": decayed, "lr": self.lr_backbone, "weight_decay": self.wd_backbone},
+            {"params": undecayed, "lr": self.lr_backbone, "weight_decay": 0.0},
+        ]
+
+
 # ----------------------------------------------------------------------------- the control
 
 def randomize_encoder(backbone, seed: int = TRAINING.seed) -> int:
@@ -180,20 +296,28 @@ def randomize_encoder(backbone, seed: int = TRAINING.seed) -> int:
     return reset
 
 
-def build(arm: str, backbone, run, standardizer: Standardizer) -> Heads:
+def default_recipe(arm: str) -> Path:
+    return FINETUNE_RECIPE if arm == "finetune" else RECIPE
+
+
+def build(arm: str, backbone, run, standardizer: Standardizer, *,
+          lr_backbone: float = LR_BACKBONE) -> Heads:
     if arm not in ARMS:
         raise AblationError(f"unknown arm {arm!r}; expected one of {ARMS}")
     if arm == "cls":
         return Model(backbone, run, standardizer)
+    if arm == "finetune":
+        return Finetuned(backbone, run, standardizer, lr_backbone=lr_backbone)
     return (MeanPool if arm == "mean" else AttentivePool)(backbone, run, standardizer)
 
 
 # ----------------------------------------------------------------------------- the run
 
 def run(cfg: dict, out: str | Path, *, arm: str = "mean", random_encoder: bool = False,
-        recipe: str | Path = RECIPE, device: str = "cpu", chunk: int = 448,
-        workers: int = 0, max_epochs: int | None = None, backbone=None, log=print) -> dict:
-    recipe = load_run(recipe)
+        recipe: str | Path | None = None, device: str = "cpu", chunk: int = 448,
+        workers: int = 0, max_epochs: int | None = None, lr_backbone: float = LR_BACKBONE,
+        backbone=None, log=print) -> dict:
+    recipe = load_run(default_recipe(arm) if recipe is None else recipe)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(TRAINING.seed)
@@ -205,7 +329,7 @@ def run(cfg: dict, out: str | Path, *, arm: str = "mean", random_encoder: bool =
         from .encoder import load_backbone
         backbone = load_backbone()
     reset = randomize_encoder(backbone) if random_encoder else 0
-    model = build(arm, backbone, recipe, standardizer).to(device)
+    model = build(arm, backbone, recipe, standardizer, lr_backbone=lr_backbone).to(device)
     datasets = {k: TokenDataset(v, standardizer) for k, v in splits.items()}
     masks = validation_masks(splits["val"], TRAINING.seed)
     if random_encoder:
@@ -219,7 +343,14 @@ def run(cfg: dict, out: str | Path, *, arm: str = "mean", random_encoder: bool =
                             "modules_reinitialized": reset,
                             "trained_parameters": sum(p.numel() for p in model.parameters()
                                                       if p.requires_grad),
-                            "note": "Appendix B only; not one of the reported runs"})
+                            **({"lr_backbone": lr_backbone, "wd_backbone": WD_BACKBONE,
+                                "finetunes": "the encoder only; the codecs are frozen and "
+                                             "the tokens precomputed, so the tokenizer is "
+                                             "never adapted"}
+                               if arm == "finetune" else {}),
+                            "note": ("the finetuning ceiling, not one of the reported "
+                                     "runs" if arm == "finetune" else
+                                     "Appendix B only; not one of the reported runs")})
     finally:
         for split in splits.values():
             split.close()
@@ -232,7 +363,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--arm", choices=ARMS, default="mean", help="how the encoder is read")
     parser.add_argument("--random-encoder", action="store_true",
                         help="the control: reinitialize the frozen encoder first")
-    parser.add_argument("--run", default=str(RECIPE), help=f"run recipe (default {RECIPE})")
+    parser.add_argument("--run", default=None,
+                        help="run recipe (default: marginals for finetune, pooling otherwise)")
+    parser.add_argument("--lr-backbone", type=float, default=LR_BACKBONE,
+                        help=f"finetune only: encoder learning rate (default {LR_BACKBONE})")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--chunk", type=int, default=448, help="rows per forward")
     parser.add_argument("--workers", type=int, default=4)
@@ -241,7 +375,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         run(load_config(args.config), args.out, arm=args.arm,
             random_encoder=args.random_encoder, recipe=args.run, device=args.device,
-            chunk=args.chunk, workers=args.workers, max_epochs=args.max_epochs)
+            chunk=args.chunk, workers=args.workers, max_epochs=args.max_epochs,
+            lr_backbone=args.lr_backbone)
     except (AblationError, OSError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
