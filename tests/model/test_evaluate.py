@@ -182,6 +182,26 @@ def test_a_missing_checkpoint_is_reported(staged, tmp_path):
         evaluate_run(cfg, tmp_path, **QUIET)
 
 
+def test_a_rescoring_can_be_kept_out_of_the_scored_run(staged, tmp_path):
+    """Rescoring a checkpoint must not overwrite the table and the per-source dump of
+    the run it came from, which is how a published result gets clobbered."""
+    from aionflow_model.train import run as train_run
+    cfg, _, _ = staged
+    out = tmp_path / "run"
+    train_run(cfg, "configs/rates.yaml", out, chunk=8, max_epochs=1,
+              backbone=a_backbone(), **QUIET)
+    evaluate_run(cfg, out, chunk=8, draws=8, backbone=a_backbone(), **QUIET)
+    first = (out / RESULTS).read_text()
+
+    elsewhere = tmp_path / "k24"
+    evaluate_run(cfg, out, chunk=8, draws=8, backbone=a_backbone(), nodes=24,
+                 out_dir=elsewhere, **QUIET)
+    assert (elsewhere / RESULTS).is_file() and (elsewhere / PER_SOURCE).is_file()
+    assert (out / RESULTS).read_text() == first          # the original is untouched
+    assert json.loads((elsewhere / RESULTS).read_text())["quadrature_nodes"] == 24
+    assert json.loads(first)["quadrature_nodes"] == 12
+
+
 def test_results_and_dump_are_written_next_to_the_checkpoint(staged, tmp_path):
     from aionflow_model.train import run as train_run
     cfg, _, _ = staged

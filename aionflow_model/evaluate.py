@@ -20,6 +20,10 @@ Every combination is scored on one common subsample per head, fixed across the 1
 rows so they are comparable: the test sources that hold all four modalities and
 every one of the head's targets. Its size is an output, recorded, not a target.
 
+Outputs land in the run directory unless `--out-dir` says otherwise, so rescoring a
+checkpoint on a finer quadrature does not overwrite the table and the per-source
+dump of the run it came from.
+
 The emission-line baseline is scored through this same function, with `--baseline`,
 so Figure 1's comparison is against the same prior on the same subsample. Its 15
 rows are identical to each other, since it reads no modality.
@@ -229,7 +233,7 @@ def evaluate(model: Heads, splits: dict[str, Split], *, device: str = "cpu",
 
 def run(cfg: dict, run_dir: str | Path, *, device: str = "cpu", chunk: int = 448,
         draws: int = DRAWS, workers: int = 0, baseline: bool = False, backbone=None,
-        nodes: int = K, results_name: str = RESULTS, log=print) -> dict:
+        nodes: int = K, out_dir: str | Path | None = None, log=print) -> dict:
     run_dir = Path(run_dir)
     if not (run_dir / CHECKPOINT).is_file():
         raise EvaluateError(f"no checkpoint at {run_dir / CHECKPOINT}")
@@ -257,9 +261,11 @@ def run(cfg: dict, run_dir: str | Path, *, device: str = "cpu", chunk: int = 448
     finally:
         for split in splits.values():
             split.close()
-    (run_dir / results_name).write_text(json.dumps(results, indent=1) + "\n")
-    frame.to_csv(run_dir / PER_SOURCE, index=False)
-    log(f"[evaluate] {len(results['rows'])} rows -> {run_dir / results_name}")
+    out_dir = run_dir if out_dir is None else Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / RESULTS).write_text(json.dumps(results, indent=1) + "\n")
+    frame.to_csv(out_dir / PER_SOURCE, index=False)
+    log(f"[evaluate] {len(results['rows'])} rows -> {out_dir / RESULTS}")
     return results
 
 
@@ -276,13 +282,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--nodes", type=int, default=K,
                         help=f"quadrature nodes per axis (default {K}, the paper's K); "
                              f"raising it rescores a checkpoint on a finer grid")
-    parser.add_argument("--results-name", default=RESULTS,
-                        help="write the table here instead, to keep a rescoring separate")
+    parser.add_argument("--out-dir", default=None,
+                        help="where to write results.json and per_source.csv (default: the "
+                             "run directory). Give a rescoring its own directory rather than "
+                             "overwriting a scored run")
     args = parser.parse_args(argv)
     try:
         run(load_config(args.config), args.run_dir, device=args.device, chunk=args.chunk,
             draws=args.draws, workers=args.workers, baseline=args.baseline,
-            nodes=args.nodes, results_name=args.results_name)
+            nodes=args.nodes, out_dir=args.out_dir)
     except (EvaluateError, OSError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
