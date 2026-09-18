@@ -91,6 +91,24 @@ a Poisson factor, or integrated on the fixed prior grid. A source with nothing
 observed in a head is not scored by it, because integrating out every dimension
 gives log 1 whatever the model says.
 
+**How many nodes is enough.** K = 12 is not converged for the four-dimensional
+joint. Scoring one fixed checkpoint at three resolutions - `evaluate --nodes`,
+each into its own `--out-dir`, so training is held constant and only the
+quadrature moves - gives a mean information gain that falls 0.659 nats from K=12
+to K=24 and then rises 0.221 from K=24 to K=48. The alternating sign and the
+roughly threefold shrink are an integral converging, not an estimator failing:
+extrapolating the ratio puts the limit about 0.05 below K=48, so K=12 carries a
+bias near 0.5 nats and K=48 is converged for practical purposes. Report the
+four-dimensional joint at `--nodes 48`.
+
+The estimator itself is exact where the method assumes it is. Fed an analytic
+Gaussian of width one standardized unit it returns log 1 = 0 to four decimals in
+one dimension and in four; it degrades only once the integrand is much narrower
+than the node spacing, below about 0.3 standardized units. The trained flow's
+conditional widths under full conditioning are 0.6 to 1.0, except log M* at 0.35.
+Heads whose dimensions are all pinned are unaffected either way, which is why the
+four scalar marginals reproduce and only `rho` moves.
+
 ## 5. Appendix B
 
 `ablations.py` is the only module the main path never imports, because the package
@@ -139,19 +157,33 @@ Each is written into the run directory, so a reader can see what was done.
 Filled in after the three runs; the paper's numbers will move before submission,
 so this table is a comparison, not a target.
 
+Ten of the twelve land within a few percent, on a larger sample with the stars
+removed and every standardizer measured afresh. The information gains run 3 to 7%
+low across all four targets and all fifteen input combinations, uniformly enough
+that the cause is the sample rather than any one head; dropping the foreground
+stars removes a distinctive, easily separated population and with it some of the
+gain over a prior.
+
+The two exceptions are both `rho`, the only quantity read from the joint4 run.
+That run found its best at epoch 6 and stopped at 12, while marginals ran to 17
+and rates to 28 - the hardest head converging fastest and worst, which is
+backwards, and a sign it is undertrained rather than converged. It is also the
+head most exposed to the quadrature's K-dependence (see 4), being the one that
+routinely integrates three dimensions. Retraining it is the open item.
+
 | quantity | paper | here |
 |---|---|---|
-| IG, four modalities, X-ray flux | 0.299 | *pending* |
-| IG, four modalities, log LX | 1.252 | *pending* |
-| IG, four modalities, log SFR | 0.937 | *pending* |
-| IG, four modalities, log M* | 0.957 | *pending* |
-| baseline IG, X-ray flux | 0.197 | *pending* |
-| R2, four modalities, X-ray flux | 0.496 | *pending* |
-| redshift alone, log LX | 1.02 | *pending* |
-| sSFR under the joint over independent heads | 0.24 nats | *pending* |
-| counts under the rate joint over its prior | 0.957 nats | *pending* |
-| rho negative among test galaxies | 74% | *pending* |
-| rho negative below z = 0.7 | 85% | *pending* |
-| 68 / 90 / 95% coverage | 66.2-68.0 / 88.5-89.7 / 93.9-94.8% | *pending* |
+| IG, four modalities, X-ray flux | 0.299 | 0.282 |
+| IG, four modalities, log LX | 1.252 | 1.216 |
+| IG, four modalities, log SFR | 0.937 | 0.908 |
+| IG, four modalities, log M* | 0.957 | 0.950 |
+| baseline IG, X-ray flux | 0.197 | 0.162 |
+| R2, four modalities, X-ray flux | 0.496 | 0.491 |
+| redshift alone, log LX | 1.02 | 0.991 |
+| sSFR under the joint over independent heads | 0.24 nats | 0.229 nats |
+| counts under the rate joint over its prior | 0.957 nats | 0.947 nats |
+| rho negative among test galaxies | 74% | 60.9% (n = 1,866) |
+| rho negative below z = 0.7 | 85% | 58.5% (n = 1,186) |
+| 68 / 90 / 95% coverage | 66.2-68.0 / 88.5-89.7 / 93.9-94.8% | 65.9-67.0 / 88.4-89.3 / 93.6-94.5% |
 | trained parameters, the three runs | 11.7M / 5.2M / 5.3M | 11,731,536 / 5,219,184 / 5,317,856 |
 | trained parameters, Appendix B's arms | 6.8M / 5.6M / 3.3M | 6,795,888 / 5,625,456 / 3,256,176 |
