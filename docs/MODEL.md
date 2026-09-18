@@ -164,6 +164,16 @@ that the cause is the sample rather than any one head; dropping the foreground
 stars removes a distinctive, easily separated population and with it some of the
 gain over a prior.
 
+`ablations.py --arm finetune` unfreezes the encoder under the same probe and the
+same `marginals.yaml` recipe, so the only difference is whether the backbone had a
+gradient. It is worth +0.036 to +0.089 nats of information gain and +0.012 to
++0.036 of R2, and it passes the paper on all four targets. Two readings, both
+fair: the frozen representation carries most of the signal, within 3 to 9% of an
+adapted encoder on a twenty-eighth of the trainable parameters; and the ceiling
+above the frozen probe is real rather than assumed. It is one run at one learning
+rate, and a short probe over 3e-6 to 1e-4 moved the validation metric by about
+0.04 nats, which is the size of the flux and LX gains themselves.
+
 The two exceptions are both `rho`, the only quantity read from the joint4 run.
 That run found its best at epoch 6 and stopped at 12, while marginals ran to 17
 and rates to 28 - the hardest head converging fastest and worst, which is
@@ -185,5 +195,6 @@ routinely integrates three dimensions. Retraining it is the open item.
 | rho negative among test galaxies | 74% | 60.9% (n = 1,866) |
 | rho negative below z = 0.7 | 85% | 58.5% (n = 1,186) |
 | 68 / 90 / 95% coverage | 66.2-68.0 / 88.5-89.7 / 93.9-94.8% | 65.9-67.0 / 88.4-89.3 / 93.6-94.5% |
+| finetune vs frozen, IG at four modalities | not in the paper | flux 0.318 / 0.282, LX 1.253 / 1.216, SFR 0.997 / 0.908, M* 1.033 / 0.950 |
 | trained parameters, the three runs | 11.7M / 5.2M / 5.3M | 11,731,536 / 5,219,184 / 5,317,856 |
 | trained parameters, Appendix B's arms | 6.8M / 5.6M / 3.3M | 6,795,888 / 5,625,456 / 3,256,176 |
