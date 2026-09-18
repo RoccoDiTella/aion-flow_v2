@@ -66,9 +66,10 @@ train:  ## train one run: make train RUN=configs/joint4.yaml OUT=runs/joint4 [DE
 	$(PY) -m aionflow_model.train --config $(CONFIG) --run $(RUN) --out $(OUT) \
 		$(if $(DEVICE),--device $(DEVICE),) $(if $(CHUNK),--chunk $(CHUNK),)
 
-evaluate:  ## score a trained run on the test split: make evaluate OUT=runs/joint4 [DEVICE=cuda BASELINE=1]
+evaluate:  ## score a trained run: make evaluate OUT=runs/joint4 [NODES=48 OUTDIR=... DEVICE=cuda BASELINE=1]
 	$(PY) -m aionflow_model.evaluate --config $(CONFIG) --run-dir $(OUT) \
 		$(if $(DEVICE),--device $(DEVICE),) $(if $(CHUNK),--chunk $(CHUNK),) \
+		$(if $(NODES),--nodes $(NODES),) $(if $(OUTDIR),--out-dir $(OUTDIR),) \
 		$(if $(BASELINE),--baseline,)
 
 baseline:  ## train the emission-line baseline: make baseline OUT=runs/baseline [DEVICE=cuda]

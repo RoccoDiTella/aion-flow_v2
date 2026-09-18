@@ -1,8 +1,9 @@
 # Data contract
 
-What each step reads, what it writes, and the rules it applies. Counts marked
-*pending* are filled from `data/provenance/` once the canonical run has been
-made. Constants are in `config.yaml`; this page states them where they matter.
+What each step reads, what it writes, and the rules it applies. Every count on
+this page is from the canonical run and is reproduced in `data/provenance/`, one
+committed ledger per step, with the checksums of what was read and every row cut.
+Constants are in `config.yaml`; this page states them where they matter.
 
 ## 1. Inputs
 

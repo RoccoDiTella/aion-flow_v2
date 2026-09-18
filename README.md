@@ -91,14 +91,19 @@ make train RUN=configs/rates.yaml     OUT=runs/rates     DEVICE=cuda
 make train RUN=configs/joint4.yaml    OUT=runs/joint4    DEVICE=cuda
 make baseline OUT=runs/baseline
 make evaluate OUT=runs/marginals DEVICE=cuda               # and for each run
+make evaluate OUT=runs/joint4 NODES=48 DEVICE=cuda         # the joint wants a finer grid
 make analysis DEVICE=cuda && make figures
 ```
 
 The three runs differ only in their heads: four scalar heads with a (SFR, M*)
 joint, the two-band rate joint, and the four-dimensional joint behind the
-within-object correlation. Tokenizing is a step of its own because AION's codecs
-cost about half a second per source, two orders of magnitude more than the
-encoder pass they feed, and are frozen and deterministic.
+within-object correlation. That last one is scored on a finer quadrature than the
+default K = 12, which is not converged for it; section 4 of
+[docs/MODEL.md](docs/MODEL.md) has the ladder that measures it.
+
+Tokenizing is a step of its own because AION's codecs cost about half a second
+per source, two orders of magnitude more than the encoder pass they feed, and are
+frozen and deterministic.
 
 If your machine has no Python development headers, export
 `TORCH_DISABLE_NATIVE_JIT=1` before training. Torch routes some operators to
