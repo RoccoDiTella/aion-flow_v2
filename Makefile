@@ -76,10 +76,10 @@ baseline:  ## train the emission-line baseline: make baseline OUT=runs/baseline 
 	$(PY) -m aionflow_model.baseline --config $(CONFIG) --out $(OUT) \
 		$(if $(DEVICE),--device $(DEVICE),)
 
-analysis:  ## sSFR, hardness ratios, the within-object correlation and the bootstrap
+analysis:  ## sSFR, hardness ratios, the within-object correlation [DEVICE=cuda CHUNK=64]
 	$(PY) -m aionflow_model.analysis --config $(CONFIG) --out results \
 		--marginals runs/marginals --rates runs/rates --joint4 runs/joint4 \
-		$(if $(DEVICE),--device $(DEVICE),)
+		$(if $(DEVICE),--device $(DEVICE),) $(if $(CHUNK),--chunk $(CHUNK),)
 
 figures:  ## Figures 1 to 3 and Table 1 from results/ into figures/
 	$(PY) -m aionflow_model.figures --analysis results --out figures \

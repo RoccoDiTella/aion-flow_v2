@@ -1,168 +1,142 @@
-# Data contract
+# Data
 
-What each step reads, what it writes, and the rules it applies. Every count on
-this page is from the canonical run and is reproduced in `data/provenance/`, one
-committed ledger per step, with the checksums of what was read and every row cut.
-Constants are in `config.yaml`; this page states them where they matter.
+This page describes how the sample is built: what each step reads, the rules it
+applies and what it writes. All counts are from our run and match the ledgers in
+`data/provenance/`. Constants are in `config.yaml`.
 
-## 1. Inputs
+## Inputs
 
-| # | file | rows | what it is |
+| # | file | rows | contents |
 |---|---|---|---|
-| 1 | `eRASSc3_Main_LS10_Public_27Jul2026.fits.gz` | 1,591,243 | SRG/eROSITA-DE DR2 (eRASS:3) NWAY counterparts to Legacy Survey DR10; one row per candidate, `NWAY_match_flag` 1 for the adopted counterpart |
+| 1 | `eRASSc3_Main_LS10_Public_27Jul2026.fits.gz` | 1,591,243 | SRG/eROSITA-DE DR2 (eRASS:3) NWAY counterparts to Legacy Survey DR10, one row per candidate |
 | 2 | `eRASS3_Main_v1.3.fits` | 1,975,540 | eRASS:3 Main catalogue, one row per X-ray detection |
-| 3 | `zall-pix-iron.fits` | 28,425,963 | DESI DR1 redshift catalogue, one row per (target, survey, program) coadd; `ZCAT_PRIMARY` marks DESI's best observation |
-| 4 | `IronPhysProp_v1.2.fits` | 17,149,172 | DESI DR1 CIGALE fits to grz + W1-W4 photometry at the DESI redshift |
-| 5 | DESI DR1 healpix coadds | read by HTTP range | `coadd-{survey}-{program}-{healpix}.fits`, cameras B, R, Z |
-| 6 | Legacy Survey DR10 cutouts | one per target | `ls-dr10`, 160 px at 0.262"/px, bands griz, centred on the DESI target position |
+| 3 | `zall-pix-iron.fits` | 28,425,963 | DESI DR1 redshift catalogue, one row per coadd |
+| 4 | `IronPhysProp_v1.2.fits` | 17,149,172 | DESI DR1 CIGALE fits to grz and W1–W4 photometry at the DESI redshift |
+| 5 | DESI DR1 healpix coadds | — | spectra from cameras B, R and Z, read by HTTP range for our targets only |
+| 6 | Legacy Survey DR10 cutouts | one per target | griz, 160 px at 0.262″/px, centred on the DESI target |
 
-Sizes, URLs and checksums: `config.yaml`. The fetch step (`data/provenance/raw.json`)
-records what was retrieved and when.
+## Selection
 
-## 2. Selection
+`crossmatch` applies rules 1 to 6 and `manifest_split` rule 7.
 
-Applied in `crossmatch` (rules 1 to 5) and `manifest_split` (rule 6).
+1. **DESI targets.** We keep `ZCAT_PRIMARY` rows with `TARGETID > 0` and a finite
+   position. There is no redshift-quality cut.
+2. **NWAY counterparts.** We keep rows with `NWAY_match_flag == 1`, after
+   collapsing exact duplicates. A detection with several such rows keeps the one
+   with the highest `NWAY_p_i`, with ties broken by `NWAY_dist_post`.
+3. **Association.** We take the DESI targets within 1″ of the counterpart's
+   `LS10_RA, LS10_DEC`. Where there are several, we prefer a main-survey Legacy
+   Survey release (9010, 9011 or 9012, in bits 42–57 of the TARGETID), then the
+   nearest. The two catalogues index different Legacy Survey releases (DR9 and
+   DR10), so they cannot be joined on an identifier.
+4. **Reliability.** We require `NWAY_p_any > NWAY_threshold6`, NWAY's own
+   per-tile threshold, or `NWAY_p_any >= 0.05` where that calibration is missing.
+5. **Stars.** We drop targets DESI classifies as `STAR`, since we neither train nor
+   predict on them. A Galactic star has a real redshift of order 10⁻⁵ with
+   `ZWARN == 0`, so no redshift-quality flag would remove it.
+6. **Shared targets.** When several detections adopt the same target and every pair
+   of X-ray positions is within 15″, the group is a split source: its rows are
+   flagged `split_source` and left out of the sample in rule 7. Otherwise the row
+   with the highest `NWAY_dist_post` is kept (then `NWAY_p_any`, then the smallest
+   separation).
+7. **Sample.** Every target with both a spectrum and a cutout that is not a split
+   source.
 
-1. **DESI targets.** `ZCAT_PRIMARY`, `TARGETID > 0`, finite position. No
-   redshift-quality cut.
-2. **NWAY rows.** Exact duplicates collapsed (first kept). `NWAY_match_flag == 1`.
-   A DETUID with several primary rows keeps the highest `NWAY_p_i`, ties by
-   `NWAY_dist_post`.
-3. **Association.** All DESI targets within 1.0" of `LS10_RA, LS10_DEC`; prefer a
-   TARGETID whose release bits (42 to 57) are a main-survey Legacy Survey
-   release (9010, 9011, 9012), then the nearest. No identity join is possible:
-   DESI DR1 targeting indexes LS DR9, the NWAY table indexes DR10.
-4. **Reliability.** `NWAY_p_any > NWAY_threshold6` where the calibration is
-   present; `NWAY_p_any >= 0.05` where it is absent. Both branch counts are in
-   the ledger.
-5. **Spectral class.** Rows whose DESI `SPECTYPE` is `STAR` are dropped
-   (`spectype_not_stellar`). We neither train nor predict on stars, so they leave
-   here rather than being carried through labels, spectra and cutouts to be
-   filtered at the end; dropping them early also avoids fetching cutouts nothing
-   reads. A Galactic star's redshift is real but is not a distance, so its
-   luminosity would be meaningless, and no redshift-quality flag rejects it: a
-   star sits at z of order 1e-5 with `ZWARN == 0`.
-6. **Shared targets.** A target adopted by several detections: if every pair of
-   X-ray positions is within 15", the group is a split source (all rows flagged
-   `split_source`, excluded from the sample); otherwise a collision, and the row
-   with the highest `NWAY_dist_post` (then `NWAY_p_any`, then the smallest
-   separation) wins.
-7. **Sample.** Rows with a fetched spectrum and a fetched cutout, minus
-   split-source rows. Every sample target is unique.
+Detection likelihood (`DET_LIKE_0 > 6`), redshift quality and WISE availability
+are not sample cuts. They are carried as label gates and presence flags.
 
-Not sample cuts, carried instead: `DET_LIKE_0 > 6` (a label gate on the
-broad-band heads; the Main catalogue's own inclusion threshold), redshift
-quality (`has_z`) and WISE availability (`has_wise`).
+Of 1,591,243 NWAY rows, 2,203 stars are dropped and 129,360 crossmatch rows remain.
+The sample has 129,356 sources; the only further loss is two split sources.
 
-Counts of the canonical run: 1,591,243 NWAY rows in, 2,203 stars dropped,
-129,360 crossmatch rows out, 129,356 in the sample (the only further loss is two
-split-source pairs), split 103,485 / 12,935 / 12,936. Full detail in
-`data/provenance/crossmatch.json` and `manifest_split.json`.
+## Split
 
-## 3. Split
+We sort the sample by `targetid`, permute it with `numpy.random.RandomState(42)`
+and cut it at 80/10/10, giving 103,485 training, 12,935 validation and 12,936 test
+sources. The split depends only on the sample, the seed and the fractions.
 
-The sample sorted by `targetid`, permuted by `numpy.random.RandomState(42)`,
-and cut at the cumulative fractions 0.8 / 0.9 (rounded to whole rows) into
-train, val, test. The assignment depends only on the sample, the seed and the
-fractions. Sizes: 103,485 train, 12,935 val, 12,936 test of 129,356.
-
-## 4. Outputs
+## Outputs
 
 ### `data/work/crossmatch.parquet`
 
-One row per (detection, target). Columns: `targetid`; from NWAY `ero_detuid`,
-`xray_ra`, `xray_dec` (the X-ray position), `ls10_ra`, `ls10_dec`,
-`nway_p_any`, `nway_p_i`, `nway_threshold6`, `nway_dist_post`,
-`ls10_flux_w1..w3`, `ls10_flux_ivar_w1..w3` (nanomaggies); from DESI
-`target_ra`, `target_dec`, `survey`, `program`, `healpix`, `spectype`, `z`,
-`zwarn`; `sep_arcsec` (target to LS10 position) and `split_source`.
+One row per (detection, target). From NWAY: `ero_detuid`, `xray_ra`, `xray_dec`,
+`ls10_ra`, `ls10_dec`, `nway_p_any`, `nway_p_i`, `nway_threshold6`,
+`nway_dist_post`, `ls10_flux_w1..w3` and `ls10_flux_ivar_w1..w3` (nanomaggies).
+From DESI: `targetid`, `target_ra`, `target_dec`, `survey`, `program`, `healpix`,
+`spectype`, `z`, `zwarn`. Also `sep_arcsec` (target to LS10 position) and
+`split_source`.
 
 ### `data/work/labels.csv`
 
-Every crossmatch column, plus, per band `b` in `1` (0.2-2.3 keV), `p2`
-(0.5-1.0), `p3` (1.0-2.0):
+Every crossmatch column, plus the following for each band `b`: `1` (0.2–2.3 keV),
+`p2` (0.5–1.0 keV) and `p3` (1.0–2.0 keV).
 
 | column | definition |
 |---|---|
-| `log_flux_<b>` | log10 `ML_FLUX`, NaN where the flux is not a measurement |
-| `log_flux_<b>_sig_lo`, `_sig_hi` | split-normal errors in dex: `-log10(1 - LOWERR/F)`, `log10(1 + UPERR/F)`; the value is NaN if either exceeds 1.5 dex or the lower error swallows the flux |
-| `det_like_0`, `det_like_<b>` | detection likelihood (`det_like_0` is the broad band's) |
-| `ape_cts_<b>`, `ape_bkg_<b>`, `ape_exp_<b>` | the Poisson triple: aperture counts N (source plus background), background B, exposure t; N ~ Poisson(lambda t + B). A wrapped int16 count makes the triple missing; a negative background is clipped to 0 and flagged in `ape_bkg_negative_<b>` |
+| `log_flux_<b>` | log10 of `ML_FLUX`; NaN where the flux is not a measurement |
+| `log_flux_<b>_sig_lo`, `_sig_hi` | split-normal errors in dex, `-log10(1 - LOWERR/F)` and `log10(1 + UPERR/F)`; the flux is NaN if either exceeds 1.5 dex or the lower error exceeds the flux |
+| `det_like_0`, `det_like_<b>` | detection likelihood; `det_like_0` is the broad band's |
+| `ape_cts_<b>`, `ape_bkg_<b>`, `ape_exp_<b>` | aperture counts N, background B and exposure t, with N ~ Poisson(λt + B). A wrapped int16 count makes the triple missing; a negative background is set to 0 and flagged in `ape_bkg_negative_<b>` |
 
-`log_lx` = `log_flux_1 + log10(4 pi D_L^2)` at Planck18, NaN below
-`labels.z_floor` (0.001, about 4 Mpc). The floor is not a guard against dividing
-by zero; it is the statement that the redshift is cosmological before it is used
-as a distance. Stars are already gone by this point, so it is the safety net for
-anything misclassified the other way, and it catches 154 rows of the canonical
-run.
+`log_lx` is `log_flux_1 + log10(4π D_L²)` for a Planck18 cosmology. It is NaN below
+z = 0.001 (about 4 Mpc), where a redshift is not a reliable distance. This affects
+154 rows.
 
-From CIGALE, one fit per target (same survey and program as the DESI
-observation, then a main-survey fit, then lowest chi2): `logmstar_cigale`,
-`log_sfr`, each with `_sig_lo` and `_sig_hi` equal to the catalogue error, NaN
-where the fit failed (both values exactly 0), a -99 sentinel is present, the
-quantity's PDF flag is outside (0.2, 5), the error is non-positive, or the
-error exceeds 3 dex.
+`logmstar_cigale` and `log_sfr` come from one CIGALE fit per target, chosen by
+matching survey and program, then a main-survey fit, then the lowest χ². Each has
+`_sig_lo` and `_sig_hi` equal to the catalogue error. A value is NaN where the fit
+failed (both values exactly 0), holds a −99 sentinel, has a PDF flag outside
+(0.2, 5), or has an error that is non-positive or larger than 3 dex.
 
-Label availability in the canonical run, of 129,360 crossmatch rows:
-`log_flux_1` 129,294, `log_lx` 129,140, `log_flux_p2` 121,051, `log_flux_p3`
-118,263, `logmstar_cigale` 116,318, `log_sfr` 104,050. The aperture triples are
-complete for every row and every band. The CIGALE gates cost 11,651 masses to a
-broad PDF and 22,246 star formation rates, of which 1,671 to the 3 dex error cap
-alone (`labels.json`).
+Labels available among the 129,360 crossmatch rows:
+
+| label | rows |
+|---|---|
+| `log_flux_1` | 129,294 |
+| `log_lx` | 129,140 |
+| `log_flux_p2` | 121,051 |
+| `log_flux_p3` | 118,263 |
+| `logmstar_cigale` | 116,318 |
+| `log_sfr` | 104,050 |
+
+The aperture triples are complete for every row and band.
 
 ### `data/work/manifest.csv` and `split.csv`
 
-Manifest, one row per crossmatch row: `targetid`, `ero_detuid`, `in_sample`,
-`split` (blank outside the sample), `has_spectrum`, `has_z` (finite, `z > 0`,
-`zwarn == 0`), `has_wise` (an LS10 band with flux > 0 and ivar > 0),
-`has_image` (a cutout file), `spectype`, `z`, `zwarn`, `target_ra`,
-`target_dec`, `ls10_flux_w1..w3`, `survey`, `program`, `healpix`,
-`split_source`. Split: `targetid, split` for the sample.
+The manifest has one row per crossmatch row: `targetid`, `ero_detuid`,
+`in_sample`, `split` (blank outside the sample), `has_spectrum`, `has_z` (finite
+z > 0 with `zwarn == 0`), `has_wise` (an LS10 WISE band with positive flux and
+inverse variance), `has_image`, `spectype`, `z`, `zwarn`, `target_ra`,
+`target_dec`, `ls10_flux_w1..w3`, `survey`, `program`, `healpix` and
+`split_source`. `split.csv` holds `targetid, split` for the sample.
 
-Coverage within the sample of 129,356: `has_spectrum` and `has_image` 129,356
-each, by construction; `has_wise` 129,343 (99.99%); `has_z` 126,392 (97.7%).
+Within the sample, every source has a spectrum and an image, 129,343 (99.99%) have
+WISE and 126,392 (97.7%) have a good redshift.
 
 ### `data/staged/{train,val,test}.h5`
 
-Inputs only, rows in the order of `spectra/source.h5`.
+Model inputs only; labels stay in `labels.csv`.
 
 | dataset | dtype | shape |
 |---|---|---|
 | `targetid` | int64 | (n,) |
-| `spectra`, `spectra_ivar` | float32 | (n, 7781); grid 3600.0 + 0.8 k Angstrom, cameras B, R, Z coadded by inverse variance |
+| `spectra`, `spectra_ivar` | float32 | (n, 7781), on a grid from 3600 Å in steps of 0.8 Å, with B, R and Z coadded by inverse variance |
 | `spectra_lambda` | float32 | (7781,) |
 | `redshift`, `flux_w1`, `flux_w2`, `flux_w3` | float32 | (n,) |
-| `image_flux` | float32 | (n, 4, 160, 160); griz |
+| `image_flux` | float32 | (n, 4, 160, 160), griz |
 | `has_z`, `has_wise` | bool | (n,) |
-
-Attributes: `image_bands = [DES-G, DES-R, DES-I, DES-Z]`, `image_size = 160`,
-`split`. Chunks are row-aligned (every axis but the first full), gzip level 4
-on the spectra, none on the images.
 
 ### `data/work/line_features.csv`
 
-One row per sample target: `targetid`, `split`, `spectype`, `z`, and for each
-of `oiii_5007`, `nev_3426`, `halpha`, `hbeta`: `<line>_flux` (the line's
-integrated flux, flux-density units times observed Angstrom, from a
-single-component Gaussian fit over a local linear continuum; 0 where the line
-is outside the coverage or the fit failed), `<line>_flux_err`, `<line>_an`
-(amplitude over median noise), `<line>_status`. `line_fits.csv` holds every
-fitted parameter.
+The emission-line baseline's inputs, one row per source: `targetid`, `split`,
+`spectype`, `z`, and for each of `oiii_5007`, `nev_3426`, `halpha` and `hbeta` the
+columns `<line>_flux`, `<line>_flux_err`, `<line>_an` (amplitude over median
+noise) and `<line>_status`. Fluxes come from a single Gaussian over a local linear
+continuum, fitted on our own spectra, and are 0 where the line falls outside the
+coverage or the fit failed. `line_fits.csv` holds every fitted parameter.
 
-## 5. Ledgers
+## Ledgers
 
-`data/provenance/<step>.json`, one per step: the config path and its sha256,
-each input's path, size and sha256, counts in and out, an ordered filter
-ledger (`filter`, `kept`, `dropped`), and step-specific extras. `validate.json`
-lists every check with its verdict.
-
-## 6. Reproducing
-
-```sh
-uv venv && uv pip install -e ".[dev]"
-make all
-```
-
-Steps run in order and each can be rerun alone with `make <step>`. The
-`spectra` and `cutouts` steps resume; the others recompute. `make validate`
-must pass before anything downstream reads the staged files.
+Each step writes `data/provenance/<step>.json` with the config and its sha256,
+each input's path, size and sha256, the counts in and out, and an ordered list of
+filters with the rows each kept and dropped. `validate.json` lists every check and
+its result. `make validate` must pass before the staged files are used.

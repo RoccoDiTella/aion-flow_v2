@@ -1,171 +1,118 @@
 # aion-flow_v2
 
-Companion code for *Probabilistic probes for galaxy evolution: signatures of AGN
-feedback in the AION foundation model*.
+Code for *Probabilistic probes for galaxy evolution: signatures of AGN feedback in
+the AION foundation model*.
 
-`aionflow_data` builds the data. From four public catalogues and two public
-archives it makes the training inputs, the label table, the
-train/validation/test split and the emission-line baseline features. Every step
-is deterministic, resumable, and writes a provenance ledger with the checksums
-of what it read, the counts of what it wrote, and every row it cut.
+We train probes on the frozen AION-1 encoder to predict X-ray and host-galaxy
+properties of eROSITA sources from four inputs: DESI spectra (S), Legacy Survey
+images (I), WISE photometry (W) and redshift (Z). A trained CLS token reads every
+layer of the encoder, and normalizing-flow heads turn its final state into
+posteriors. Photon counts enter through a Poisson likelihood, so a band with zero
+counts is a measurement, not a missing value.
 
-`aionflow_model` is the probe. A read-only CLS token pools information through
-the frozen AION-1-B encoder, and normalizing-flow heads on that summary give
-posteriors over X-ray and host-galaxy properties, with an exact Poisson marginal
-likelihood for the photon counts so a zero-count band is a measurement rather
-than a missing value. See [docs/MODEL.md](docs/MODEL.md).
+The repository has two packages. `aionflow_data` builds the sample from public
+catalogues. `aionflow_model` tokenizes the inputs, trains the probes and scores
+them. [docs/DATA.md](docs/DATA.md) describes the data and
+[docs/MODEL.md](docs/MODEL.md) the model.
 
-## What it produces
-
-| output | contents |
-|---|---|
-| `data/staged/{train,val,test}.h5` | inputs only: DESI spectra and inverse variance on the 7,781-bin grid, redshift, WISE W1-W3 fluxes, Legacy Survey griz cutouts, and the redshift and WISE presence flags |
-| `data/work/labels.csv` | one row per source: eROSITA band fluxes with split-normal errors, luminosity, detection likelihoods, aperture photon counts, CIGALE stellar mass and star formation rate |
-| `data/work/split.csv` | `targetid, split` |
-| `data/work/line_features.csv` | [O III] 5007, [Ne V] 3426, H-alpha and H-beta fluxes fitted on our own spectra, for the classical baseline |
-| `data/provenance/<step>.json` | one ledger per step |
-
-Column definitions, selection rules and the counts of the canonical run are in
-[docs/DATA.md](docs/DATA.md).
-
-### The model
-
-| output | contents |
-|---|---|
-| `data/staged/tokens_{train,val,test}.h5` | AION's 853 token ids per source, from its frozen codecs |
-| `runs/<name>/best.pt` | the selected checkpoint, with its standardizers |
-| `runs/<name>/{choices,history}.json` | what the paper leaves open, and the epoch-by-epoch metric |
-| `runs/<name>/{results.json,per_source.csv}` | information gain, R2 and coverage over the 15 input combinations, and every test source's log likelihood under each |
-| `results/{analysis.json,rho.csv,hardness.csv}` | sSFR under the joint, hardness-ratio posteriors, the within-object correlation |
-| `figures/` | Figures 1 to 3 and Table 1 |
-
-## Inputs
-
-| catalogue or archive | release | size |
-|---|---|---|
-| SRG/eROSITA-DE NWAY counterparts to Legacy Survey DR10 | DR2 (eRASS:3), `eRASSc3_Main_LS10_Public_27Jul2026` | 1.05 GB |
-| SRG/eROSITA-DE Main catalogue | DR2, `eRASS3_Main_v1.3` | 2.14 GB |
-| DESI redshift catalogue | DR1 (iron), `zall-pix-iron` | 21.3 GB |
-| DESI CIGALE physical properties VAC | DR1, `IronPhysProp_v1.2` | 7.32 GB |
-| DESI healpix coadd spectra | DR1 (iron) | ~13 GB read by HTTP range, only our rows |
-| Legacy Survey DR10 cutouts | `ls-dr10`, 160 px at 0.262"/px, griz | ~55 GB, one file per target |
-
-URLs, sizes and checksums are pinned in `config.yaml`; the fetch step verifies
-them and, where the publisher ships one, the publisher's checksum sidecar.
-
-## Run
+## Install
 
 ```sh
-uv venv && uv pip install -e ".[dev]"      # or python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-make test                                  # the suite runs on committed synthetic fixtures; no network
-make all                                   # every step in order on config.yaml
-make <step> CONFIG=other.yaml              # one step on another config
-make help
+uv venv && uv pip install -e ".[dev]"     # the data pipeline
+uv pip install -e ".[dev,model]"          # add the model
+make test
 ```
 
-The steps, in order: `fetch`, `crossmatch`, `labels`, `spectra`, `cutouts`,
-`manifest_split`, `stage`, `validate`, `line_features`. Each is idempotent:
-the fetchers resume from what is on disk, the others recompute from their
-inputs.
+The tests run in about a minute on synthetic fixtures committed to the repository.
+They need no network and no pretrained weights: the model tests use a small
+stand-in encoder built from AION's own transformer block. Two further tests check
+the real encoder and codecs when `AIONFLOW_TEST_AION=1` is set.
 
-| step | where it runs | wall time | disk |
-|---|---|---|---|
-| fetch | anywhere with 35 GB free | 1 to 3 h | 32 GB |
-| crossmatch | a machine that can hold two 200 MB columns | minutes | 50 MB |
-| labels | same | minutes | 100 MB |
-| spectra | outbound HTTP; 6 workers | about half a day | ~9 GB |
-| cutouts | outbound HTTP; sequential, rate limited by the service | about eight days | ~55 GB |
-| manifest_split, stage, validate | same | about an hour | ~55 GB |
-| line_features | all cores | hours | 100 MB |
-
-The cutout fetch is the long pole and can start as soon as the crossmatch
-exists; it is safe to interrupt and rerun.
-
-Then the model, which needs the `[model]` extra and a GPU:
+## Building the data
 
 ```sh
-uv pip install -e ".[dev,model]"
-make tokenize DEVICE=cuda                                  # once; the codecs are frozen
+make all
+```
+
+This runs nine steps in order: `fetch`, `crossmatch`, `labels`, `spectra`,
+`cutouts`, `manifest_split`, `stage`, `validate` and `line_features`. Each can also
+be run alone with `make <step>`. The fetchers skip files already on disk, so an
+interrupted run can be restarted.
+
+| step | wall time | disk |
+|---|---|---|
+| fetch | 1 to 3 h | 32 GB |
+| crossmatch, labels | minutes | 150 MB |
+| spectra | about half a day | 9 GB |
+| cutouts | about 8 days | 55 GB |
+| manifest_split, stage, validate | about an hour | 55 GB |
+| line_features | a few hours | 100 MB |
+
+The cutout fetch is rate-limited by the Legacy Survey service and dominates the
+total. It can start as soon as `crossmatch` has run. Catalogue URLs, sizes and
+checksums are pinned in `config.yaml`. Each step writes a ledger to
+`data/provenance/` with the checksums of its inputs and every row it cut; the
+ledgers from our run are committed.
+
+## Training and scoring
+
+This part needs a GPU.
+
+```sh
+make tokenize DEVICE=cuda
 make train RUN=configs/marginals.yaml OUT=runs/marginals DEVICE=cuda
 make train RUN=configs/rates.yaml     OUT=runs/rates     DEVICE=cuda
 make train RUN=configs/joint4.yaml    OUT=runs/joint4    DEVICE=cuda
 make baseline OUT=runs/baseline
-make evaluate OUT=runs/marginals DEVICE=cuda               # and for each run
-make evaluate OUT=runs/joint4 NODES=48 DEVICE=cuda         # the joint wants a finer grid
-make analysis DEVICE=cuda && make figures
+make evaluate OUT=runs/marginals DEVICE=cuda
+make evaluate OUT=runs/rates  NODES=48 DEVICE=cuda
+make evaluate OUT=runs/joint4 NODES=48 DEVICE=cuda
+make evaluate OUT=runs/baseline BASELINE=1
+make analysis DEVICE=cuda CHUNK=64
+make figures
 ```
 
-The three runs differ only in their heads: four scalar heads with a (SFR, M*)
-joint, the two-band rate joint, and the four-dimensional joint behind the
-within-object correlation. That last one is scored on a finer quadrature than the
-default K = 12, which is not converged for it; section 4 of
-[docs/MODEL.md](docs/MODEL.md) has the ladder that measures it.
+`tokenize` runs AION's frozen codecs once and caches the 853 tokens per source.
+The codecs take about half a second per source, far longer than the encoder pass,
+so we run them once rather than every epoch.
 
-Tokenizing is a step of its own because AION's codecs cost about half a second
-per source, two orders of magnitude more than the encoder pass they feed, and are
-frozen and deterministic.
+The three runs differ only in their heads. `marginals` has four scalar heads and a
+joint over (SFR, M⋆), `rates` a joint over the two band rates, and `joint4` a
+joint over the two band rates, SFR and M⋆, from which we read the within-object
+correlation. `rates` and `joint4` are scored with 48 quadrature nodes per axis
+rather than the training default of 12, which is not converged for heads with
+latent rates (see [docs/MODEL.md](docs/MODEL.md#the-count-likelihood)).
 
-If your machine has no Python development headers, export
-`TORCH_DISABLE_NATIVE_JIT=1` before training. Torch routes some operators to
-Triton kernels, and Triton compiles a small CUDA shim that includes `Python.h`;
-without it the backward pass dies with a `gcc` error about a missing header. The
-variable is torch's own kill switch and sends those operators back to the aten
-kernels they were overriding. Tokenizing is unaffected, being forward-only, so
-the failure appears only once training starts.
+`joint4` can be unstable at the default learning rates. In our runs its training
+loss rose after epoch 6 and it stopped after 12 epochs. With every learning rate in
+`aionflow_model/config.py` halved it trained for 33 epochs, with its best at 27.
 
-A batch of 896 sources is 896 sequences of up to 853 tokens through a frozen
-318M-parameter encoder, which is why the trainer scores a batch in chunks and
-accumulates. The paper's runs used one NVIDIA H200 (141 GB) and report 88-91 GB
-peak allocated and 3.2 h for the four-dimensional joint. If your card is smaller,
-lower `CHUNK` (default 448 rows per forward); it changes memory and speed and not
-the gradient, which a test pins. Tokenizing and the emission-line baseline are
-far lighter and will run on almost anything.
+## Hardware
 
-## The sample in one paragraph
+We trained on one NVIDIA H200. A batch is 896 sources of up to 853 tokens each,
+too large for a single forward pass, so the trainer splits it into chunks and
+accumulates the gradient. At the default `CHUNK=448`, training peaks at 95 GiB of
+the card's 140 and an epoch takes about 15 minutes. On a smaller card, lower
+`CHUNK`: it changes memory and speed but not the gradient. `analysis` draws 32,768
+posterior samples per source and needs `CHUNK=64` on the same card. Tokenizing and
+the baseline are much lighter.
 
-DESI DR1 primary targets are matched to the LS10 positions of the eROSITA DR2
-NWAY counterparts within 1 arcsecond, preferring a main-survey TARGETID where
-several fall inside the radius. Only NWAY primary counterparts are used, exact
-duplicate rows are collapsed, and a detection keeps its highest-`p_i` row. The
-reliability cut is NWAY's own per-tile threshold, `p_any > threshold6`, with a
-flat `p_any >= 0.05` where the calibration is absent. A target adopted by two
-detections is a split source when the X-ray positions lie within 15
-arcseconds (both rows excluded) and a collision otherwise (the higher
-`dist_post` wins). Targets DESI classes as `STAR` are dropped here: we neither
-train nor predict on them, and a Galactic star's redshift is real without being
-a distance, so no redshift-quality flag would catch it. The sample is what
-remains with a spectrum and a cutout.
-The split is a seeded random permutation of the sample (seed 42) cut at
-80/10/10. Detection likelihood, redshift quality and WISE availability are
-carried as label gates and presence flags, never as sample cuts.
+On a machine without Python development headers, set `TORCH_DISABLE_NATIVE_JIT=1`
+before training. Otherwise Triton fails to compile a kernel in the backward pass,
+with a `gcc` error about a missing `Python.h`.
 
 ## Layout
 
 ```
-config.yaml            every URL, checksum, constant and path
-Makefile               one target per step; `all`, `test`, `lint`, `fixtures`
-configs/               one run recipe per reported run: a name and a head list
-aionflow_data/         one module per step, plus common.py and linefit.py
-aionflow_model/        the probe, the flows, the objective, training and analysis
-tests/                 one test file per step; tests/fixtures holds synthetic
-                       catalogues, coadds and cutouts with every edge case planted;
-                       tests/model holds the stand-in encoder and codecs
-docs/DATA.md           the data contract
-docs/MODEL.md          the method, and every choice the paper leaves open
-data/provenance/       committed ledgers of the canonical run
+config.yaml        URLs, checksums, constants and paths
+configs/           run recipes: the three runs, the baseline, Appendix B
+aionflow_data/     one module per data step
+aionflow_model/    the probe, flows, objective, training and analysis
+tests/             one test file per step; synthetic fixtures in tests/fixtures
+docs/              DATA.md and MODEL.md
+data/provenance/   one ledger per data step, from our run
 ```
-
-## Tests
-
-`make test` runs about 230 tests in a minute on the committed fixtures, with no
-network and no pretrained weights: the model's tests run against a stand-in
-encoder built from AION's own transformer block, and two opt-in tests
-(`AIONFLOW_TEST_AION=1`) check the real 318M-parameter backbone and codecs.
-`tests/fixtures/make_fixtures.py` generates them deterministically and records
-in `planted.json` what each step must produce, so the tests assert against
-construction rather than against a previous run. One test runs `make all` end to
-end on that fixture config.
 
 ## License
 
-MIT. See `LICENSE` and `CITATION.cff`.
+MIT, see `LICENSE`. To cite, see `CITATION.cff`.
