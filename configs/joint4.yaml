@@ -2,3 +2,9 @@
 name: joint4
 heads:
   joint4: [rate_p2, rate_p3, sfr, mstar]
+# At the shared learning rates this head's training loss rose after six epochs;
+# at half of them it trained for 33.
+lr_scale: 0.5
+# Galaxies whose X-rays star formation could explain are not trained on
+# (aionflow_model/cleaning.py).
+exclude_sf_dominated: true

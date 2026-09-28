@@ -49,6 +49,8 @@ from aionflow_data.labels import OUTPUT as LABELS_FILE
 from aionflow_data.manifest_split import MANIFEST, SPLITS
 from aionflow_data.stage import SPLIT_FILE
 
+from .cleaning import sf_dominated
+
 TOKENS_FILE = "tokens_{split}.h5"
 
 MODALITIES = ("Z", "S", "I", "W")
@@ -226,6 +228,22 @@ class Split:
                           for t in RATE_TARGETS], 1)                 # (n, n_rates, 3)
         self.counts, self.bkg, self.expo = stack[:, :, 0], stack[:, :, 1], stack[:, :, 2]
         self.rate_ok = np.isfinite(stack).all(2) & (self.expo > 0)
+        self.sf_dominated = sf_dominated(labels["log_lx"], labels["logmstar_cigale"],
+                                         labels["log_sfr"], labels["z"], self.spectype)
+
+    def withhold(self, rows: np.ndarray) -> int:
+        """Mark every label of `rows` unobserved; returns how many rows that was.
+
+        Every consumer reads `y_ok` and `rate_ok` - the standardizer, the per-head row
+        counts, the loss - so withholding here removes the rows from all of them at
+        once, while the split itself, and every other row's assignment, stays put.
+        """
+        rows = np.asarray(rows, bool)
+        if rows.shape != (self.n,):
+            raise DataError(f"withhold needs one flag per row ({self.n}), got {rows.shape}")
+        self.y_ok[rows] = False
+        self.rate_ok[rows] = False
+        return int(rows.sum())
 
     def standardized(self, standardizer: Standardizer) -> np.ndarray:
         """The scalar targets in standardized units, zero where not usable."""

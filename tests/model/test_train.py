@@ -132,3 +132,17 @@ def test_a_joint_only_run_carries_no_scalar_head(standardizer):
     assert model.flows["rates"].features == 2
     four = Model(a_backbone(), load_run("configs/joint4.yaml"), standardizer)
     assert list(four.flows) == ["joint4"] and four.flows["joint4"].features == 4
+
+
+def test_a_recipe_can_halve_the_rates_and_withhold_sf_dominated_rows(staged, tmp_path):
+    import yaml
+    cfg, _, _ = staged
+    recipe = tmp_path / "halved.yaml"
+    recipe.write_text(yaml.safe_dump({"name": "halved", "heads": {"flux": ["flux"]},
+                                      "lr_scale": 0.5, "exclude_sf_dominated": True}))
+    run(cfg, recipe, tmp_path / "out", chunk=8, max_epochs=1, backbone=a_backbone(), **QUIET)
+    choices = json.loads((tmp_path / "out" / CHOICES).read_text())
+    assert (choices["training"]["lr_readout"], choices["training"]["lr_flow"],
+            choices["training"]["lr_adapter"]) == pytest.approx((1.5e-4, 5e-4, 1.5e-5))
+    withheld = choices["sf_dominated_withheld"]
+    assert set(withheld) == {"train", "val"} and all(v >= 0 for v in withheld.values())

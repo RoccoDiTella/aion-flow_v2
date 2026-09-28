@@ -83,9 +83,10 @@ correlation. `rates` and `joint4` are scored with 48 quadrature nodes per axis
 rather than the training default of 12, which is not converged for heads with
 latent rates (see [docs/MODEL.md](docs/MODEL.md#the-count-likelihood)).
 
-`joint4` can be unstable at the default learning rates. In our runs its training
-loss rose after epoch 6 and it stopped after 12 epochs. With every learning rate in
-`aionflow_model/config.py` halved it trained for 33 epochs, with its best at 27.
+`joint4` trains at half the shared learning rates, set in its recipe: at the full
+rates its training loss rose after epoch 6 and it stopped after 12 epochs, while at
+half it trained for 33. It also leaves out galaxies whose X-rays star formation
+could explain (see [docs/MODEL.md](docs/MODEL.md#star-formation-cut)).
 
 ## Hardware
 

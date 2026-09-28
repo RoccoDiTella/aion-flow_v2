@@ -5,7 +5,15 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from aionflow_model.config import TRAINING, ConfigError, Head, load_run, parse_run
+from aionflow_model.config import (
+    TRAINING,
+    ConfigError,
+    Head,
+    load_run,
+    parse_run,
+    recipe_path,
+    with_lr_scale,
+)
 from aionflow_model.data import TARGETS
 
 CONFIGS = "configs/{name}.yaml"
@@ -61,3 +69,32 @@ def test_every_target_names_columns_the_label_contract_has():
     for target in TARGETS.values():
         assert target.kind in ("scalar", "rate")
         assert set(target.columns) <= set(LABEL_COLUMNS), target.name
+
+
+# ----------------------------------------------------------------------------- options
+
+def test_a_recipe_may_scale_the_learning_rates_and_exclude_sf_dominated_galaxies():
+    heads = {"flux": ["flux"]}
+    run = parse_run({"name": "x", "heads": heads, "lr_scale": 0.5, "exclude_sf_dominated": True})
+    assert run.lr_scale == 0.5 and run.exclude_sf_dominated is True
+    plain = parse_run({"name": "x", "heads": heads})
+    assert plain.lr_scale == 1.0 and plain.exclude_sf_dominated is False
+    for bad in ({"lr_scale": 0}, {"lr_scale": -1}, {"lr_scale": True}, {"lr_scale": "half"},
+                {"exclude_sf_dominated": "yes"}, {"exclude_sf_dominated": 1}):
+        with pytest.raises(ConfigError):
+            parse_run({"name": "x", "heads": heads, **bad})
+
+
+def test_the_rate_scale_touches_the_three_learning_rates_and_nothing_else():
+    half = with_lr_scale(TRAINING, 0.5)
+    assert (half.lr_readout, half.lr_flow, half.lr_adapter) == pytest.approx((1.5e-4, 5e-4, 1.5e-5))
+    assert (half.batch_size, half.wd_adapter, half.patience, half.seed) == (
+        TRAINING.batch_size, TRAINING.wd_adapter, TRAINING.patience, TRAINING.seed)
+
+
+def test_only_joint4_halves_its_rates_and_withholds_sf_dominated_galaxies():
+    joint4 = load_run(recipe_path("joint4"))
+    assert joint4.lr_scale == 0.5 and joint4.exclude_sf_dominated
+    for name in ("marginals", "rates", "baseline", "pooling"):
+        other = load_run(recipe_path(name))
+        assert other.lr_scale == 1.0 and not other.exclude_sf_dominated, name

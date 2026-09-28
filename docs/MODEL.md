@@ -18,6 +18,7 @@ paper specifies something, the module's docstring quotes it.
 | `train.py` | the training loop, model selection and checkpoints |
 | `evaluate.py` | information gain, R² and coverage over the 15 input combinations |
 | `baseline.py` | the emission-line baseline |
+| `cleaning.py` | which galaxies' X-rays star formation could explain |
 | `analysis.py` | sSFR, hardness ratios and the within-object correlation |
 | `figures.py` | Figures 1 to 3 and Table 1 |
 | `ablations.py` | comparison arms, never imported by the rest of the package |
@@ -112,7 +113,27 @@ The loss is the mean over heads of each head's mean negative log-likelihood per
 source. A batch is processed in chunks of `CHUNK` sources, with each head's mean
 taken over the whole batch, so the gradient does not depend on the chunk size.
 
-In our runs `joint4` was unstable at these rates; see the README.
+`joint4` uses half these rates (`lr_scale: 0.5` in its recipe). At the full rates
+its training loss rose after epoch 6.
+
+## Star-formation cut
+
+X-ray binaries and hot gas in star-forming galaxies emit X-rays roughly in
+proportion to stellar mass and star formation rate. Where that emission could
+account for a galaxy's observed X-rays, its X-ray labels do not measure the AGN.
+
+We predict this luminosity from the CIGALE M⋆ and SFR with the relation of
+Lehmer et al. (2016, Table 3), L_X = α₀(1 + z)^γ M⋆ + β₀(1 + z)^δ SFR, in both its
+0.5–2 keV and 2–10 keV forms, each converted to 0.2–2.3 keV assuming a Γ = 2 power
+law. A galaxy is flagged if its observed L_X is at most 10 times either prediction,
+so that star formation could supply at least a tenth of its X-rays. Only DESI GALAXY
+sources are flagged, since a quasar's light inflates its CIGALE SFR, and sources
+without M⋆, SFR or z are kept.
+
+With `exclude_sf_dominated: true`, a run neither trains nor validates on flagged
+galaxies. The split itself is unchanged, and every test source is still scored. Of
+the galaxies with CIGALE values, the cut flags 4.3% (6.5% at z < 0.7). Only `joint4`
+uses it.
 
 ## Evaluation
 

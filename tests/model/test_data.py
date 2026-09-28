@@ -198,3 +198,33 @@ def test_shuffling_is_seeded_and_covers_every_row(splits, standardizer):
     assert all(torch.equal(a, b) for a, b in zip(order, again))
     assert not all(torch.equal(a, b) for a, b in zip(order, other))
     assert sorted(torch.cat(order).tolist()) == sorted(splits["train"].targetid.tolist())
+
+
+# ----------------------------------------------------------------------------- withholding
+
+def test_withheld_rows_lose_every_label_and_the_split_keeps_its_rows(staged):
+    from aionflow_model.config import load_run
+    from aionflow_model.objective import scorable_rows
+    _, work, staged_dir = staged
+    split = Split(staged_dir, work, "train")        # its own copy: withholding mutates
+    try:
+        run = load_run("configs/marginals.yaml")
+        before, n, ids = scorable_rows(run, split), split.n, split.targetid.copy()
+        rows = np.zeros(split.n, bool)
+        rows[:3] = True
+        assert split.withhold(rows) == 3
+        assert not split.y_ok[rows].any() and not split.rate_ok[rows].any()
+        after = scorable_rows(run, split)
+        assert all(after[h] <= before[h] for h in before)
+        assert sum(after.values()) < sum(before.values())
+        assert split.n == n and (split.targetid == ids).all()
+        with pytest.raises(DataError):
+            split.withhold(np.zeros(split.n + 1, bool))
+    finally:
+        split.close()
+
+
+def test_the_split_flags_only_galaxies(splits):
+    for split in splits.values():
+        assert split.sf_dominated.shape == (split.n,) and split.sf_dominated.dtype == bool
+        assert not split.sf_dominated[split.spectype != "GALAXY"].any()

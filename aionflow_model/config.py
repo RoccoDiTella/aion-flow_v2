@@ -4,16 +4,18 @@
     configs/rates.yaml       the (lambda_P2, lambda_P3) joint
     configs/joint4.yaml      the (lambda_P2, lambda_P3, SFR, M*) joint
 
-The reported runs "share this architecture and optimizer and differ only in
-their heads", so a recipe carries a name and a head list and nothing else. The
-optimizer is `TRAINING` below, transcribed from the paper; the architecture
+The runs share one architecture and optimizer and differ in their heads, so a
+recipe carries a name and a head list, plus two optional settings: `lr_scale`
+multiplies every learning rate, and `exclude_sf_dominated` withholds galaxies whose
+X-rays star formation could explain (`cleaning.py`) from training and validation.
+The optimizer is `TRAINING` below, transcribed from the paper; the architecture
 constants live beside the code they describe, in `encoder.py`, `flows.py` and
 `poisson.py`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -55,6 +57,12 @@ class Training:
 TRAINING = Training()
 
 
+def with_lr_scale(training: Training, scale: float) -> Training:
+    """The same schedule with every learning rate multiplied by `scale`."""
+    return replace(training, lr_readout=training.lr_readout * scale,
+                   lr_flow=training.lr_flow * scale, lr_adapter=training.lr_adapter * scale)
+
+
 @dataclass(frozen=True)
 class Head:
     """One readout MLP and one flow over `targets`; several targets make a joint."""
@@ -75,6 +83,8 @@ class Head:
 class Run:
     name: str
     heads: tuple[Head, ...]
+    lr_scale: float = 1.0
+    exclude_sf_dominated: bool = False
 
     @property
     def targets(self) -> tuple[str, ...]:
@@ -90,8 +100,9 @@ class Run:
 
 
 def parse_run(spec: dict) -> Run:
-    """Validate a recipe mapping: `name`, and `heads` from head name to target list."""
-    unknown = set(spec) - {"name", "heads"}
+    """Validate a recipe mapping: `name`, `heads` from head name to target list, and
+    the optional `lr_scale` and `exclude_sf_dominated`."""
+    unknown = set(spec) - {"name", "heads", "lr_scale", "exclude_sf_dominated"}
     if unknown:
         raise ConfigError(f"unknown recipe keys {sorted(unknown)}")
     name = spec.get("name")
@@ -111,7 +122,13 @@ def parse_run(spec: dict) -> Run:
         if len(set(targets)) != len(targets):
             raise ConfigError(f"head {head_name!r}: repeated target")
         heads.append(Head(str(head_name), tuple(targets)))
-    return Run(name, tuple(heads))
+    lr_scale = spec.get("lr_scale", 1.0)
+    if isinstance(lr_scale, bool) or not isinstance(lr_scale, (int, float)) or lr_scale <= 0:
+        raise ConfigError(f"`lr_scale` must be a positive number, got {lr_scale!r}")
+    exclude = spec.get("exclude_sf_dominated", False)
+    if not isinstance(exclude, bool):
+        raise ConfigError(f"`exclude_sf_dominated` must be true or false, got {exclude!r}")
+    return Run(name, tuple(heads), float(lr_scale), exclude)
 
 
 def load_run(path: str | Path) -> Run:

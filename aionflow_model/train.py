@@ -37,7 +37,7 @@ import torch
 
 from aionflow_data.common import load_config
 
-from .config import TRAINING, load_run
+from .config import TRAINING, load_run, with_lr_scale
 from .data import Split, Standardizer, TokenDataset, loader
 from .objective import Model, batch_loss, sample_subsets, scorable, scorable_rows
 
@@ -128,22 +128,23 @@ def fit(model, datasets: dict, masks: dict, out: str | Path, *, device: str = "c
         raise TrainError(f"heads {dead} can score no training row, so they would be "
                          f"optimised over in silence and look converged; check the "
                          f"label columns their targets name")
-    optimizer = torch.optim.AdamW(model.parameter_groups(TRAINING), betas=TRAINING.betas)
-    generator = torch.Generator().manual_seed(TRAINING.seed)
-    epochs = TRAINING.max_epochs if max_epochs is None else int(max_epochs)
+    training = with_lr_scale(TRAINING, getattr(model.run, "lr_scale", 1.0))
+    optimizer = torch.optim.AdamW(model.parameter_groups(training), betas=training.betas)
+    generator = torch.Generator().manual_seed(training.seed)
+    epochs = training.max_epochs if max_epochs is None else int(max_epochs)
     (out / CHOICES).write_text(json.dumps({
         "run": model.run.name,
         "heads": {head.name: list(head.targets) for head in model.run.heads},
         "validation_metric": "unweighted mean over heads of the per-row NLL on scorable rows",
         "validation_masks": "one subset per source, drawn once at seed "
-                            f"{TRAINING.seed + VALIDATION_SEED_OFFSET}",
+                            f"{training.seed + VALIDATION_SEED_OFFSET}",
         "objective": "mean over heads of the per-row NLL, rows weighted by the whole batch",
         "mixed_joint_rows": "a head mixing rates with scalars is trained only on sources "
                             "with at least one observed scalar; integrating both out says "
                             "only what the rate head already carries and costs K^2 nodes",
         "rows_trained_per_head": trainable,
         "batch_chunk_rows": chunk,
-        "training": vars(TRAINING),
+        "training": vars(training),
         **(choices or {}),
     }, indent=1) + "\n")
 
@@ -152,11 +153,11 @@ def fit(model, datasets: dict, masks: dict, out: str | Path, *, device: str = "c
         started = time.time()
         if device != "cpu" and torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
-        train_batches = loader(datasets["train"], TRAINING.batch_size, shuffle=True,
-                               workers=workers, seed=TRAINING.seed + epoch)
+        train_batches = loader(datasets["train"], training.batch_size, shuffle=True,
+                               workers=workers, seed=training.seed + epoch)
         losses = train_epoch(model, train_batches, optimizer, generator, device, chunk,
-                             TRAINING.grad_clip)
-        val_batches = loader(datasets["val"], TRAINING.batch_size, shuffle=False,
+                             training.grad_clip)
+        val_batches = loader(datasets["val"], training.batch_size, shuffle=False,
                              workers=workers)
         metric, per_head = validate(model, val_batches, masks, device, chunk)
         # The paper reports peak allocated memory and wall time per run, and the
@@ -177,7 +178,7 @@ def fit(model, datasets: dict, masks: dict, out: str | Path, *, device: str = "c
                        out / CHECKPOINT)
         else:
             since += 1
-            if since >= TRAINING.patience:
+            if since >= training.patience:
                 log(f"[train] no improvement for {since} epochs; stopping")
                 break
     log(f"[train] best epoch {best['epoch']} at {best['metric']:.4f} -> {out / CHECKPOINT}")
@@ -193,6 +194,12 @@ def run(cfg: dict, recipe: str | Path, out: str | Path, *, device: str = "cpu",
     torch.manual_seed(TRAINING.seed)
     staged, work = Path(cfg["paths"]["staged"]), Path(cfg["paths"]["work"])
     splits = {name: Split(staged, work, name) for name in ("train", "val")}
+    choices = {}
+    if recipe.exclude_sf_dominated:
+        # before the standardizer, so it too is fitted on the rows the run trains on
+        withheld = {name: split.withhold(split.sf_dominated) for name, split in splits.items()}
+        choices["sf_dominated_withheld"] = withheld
+        log(f"[train] withheld {withheld} rows whose X-rays star formation could explain")
     standardizer = Standardizer.fit(splits["train"])
     standardizer.write(out / "standardizer.json")
     if backbone is None:
@@ -203,7 +210,7 @@ def run(cfg: dict, recipe: str | Path, out: str | Path, *, device: str = "cpu",
     masks = validation_masks(splits["val"], TRAINING.seed)
     try:
         return fit(model, datasets, masks, out, device=device, chunk=chunk, workers=workers,
-                   max_epochs=max_epochs, log=log)
+                   max_epochs=max_epochs, choices=choices, log=log)
     finally:
         for split in splits.values():
             split.close()
