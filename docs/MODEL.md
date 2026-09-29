@@ -22,6 +22,7 @@ paper specifies something, the module's docstring quotes it.
 | `analysis.py` | sSFR, hardness ratios and the within-object correlation |
 | `figures.py` | Figures 1 to 3 and Table 1 |
 | `ablations.py` | comparison arms, never imported by the rest of the package |
+| `crossval.py` | five-fold cross-validation of `joint4`, for out-of-sample ρ |
 
 The tests run against a small stand-in encoder and codecs in `tests/model/`.
 
@@ -172,6 +173,23 @@ on an H200:
 python -m aionflow_model.ablations --arm finetune --out runs/finetune \
     --lr-backbone 3e-5 --chunk 256 --device cuda
 ```
+
+## Cross-validation
+
+The per-source ρ depends noticeably on the trained model, so `crossval.py` retrains
+`joint4` five times and gives every source a ρ from a model that never saw it. The
+sample is shuffled exactly as the train/val/test split is and cut into ten blocks;
+fold f tests on blocks 2f and 2f + 1, stops early on block 2f + 2 and trains on the
+other seven (70/10/20). Blocks 0–7 are then the existing training set, 8 its
+validation set and 9 its test set.
+
+```sh
+python -m aionflow_model.crossval --fold 0 --out runs/cv/fold0 --device cuda
+```
+
+Each fold writes its model and a `rho.csv` for its held-out sources. Only ρ is
+cross-validated: the other runs were trained on the fixed split and would see a
+fold's test sources in training.
 
 ## Choices the paper leaves open
 
