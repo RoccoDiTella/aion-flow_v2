@@ -122,18 +122,21 @@ X-ray binaries and hot gas in star-forming galaxies emit X-rays roughly in
 proportion to stellar mass and star formation rate. Where that emission could
 account for a galaxy's observed X-rays, its X-ray labels do not measure the AGN.
 
-We predict this luminosity from the CIGALE M⋆ and SFR with the relation of
-Lehmer et al. (2016, Table 3), L_X = α₀(1 + z)^γ M⋆ + β₀(1 + z)^δ SFR, in both its
-0.5–2 keV and 2–10 keV forms, each converted to 0.2–2.3 keV assuming a Γ = 2 power
-law. A galaxy is flagged if its observed L_X is at most 10 times either prediction,
-so that star formation could supply at least a tenth of its X-rays. Only DESI GALAXY
+We predict this luminosity from the CIGALE M⋆ and SFR with two calibrations. The
+relation of Lehmer et al. (2016, Table 3), L_X = α₀(1 + z)^γ M⋆ + β₀(1 + z)^δ SFR,
+is used in both its 0.5–2 keV and 2–10 keV forms. That of Mineo et al. (2014),
+L_X(0.5–8 keV) = 4.0×10³⁹ SFR, covers high-mass X-ray binaries and hot gas and has
+no redshift term; it assumes a Salpeter IMF, so CIGALE's Chabrier SFR is divided by
+0.63 first. Each is converted to 0.2–2.3 keV assuming a Γ = 2 power law. A galaxy is
+flagged if its observed L_X is at most 10 times any of the three predictions, so
+that star formation could supply at least a tenth of its X-rays. Only DESI GALAXY
 sources are flagged, since a quasar's light inflates its CIGALE SFR, and sources
 without M⋆, SFR or z are kept.
 
 With `exclude_sf_dominated: true`, a run neither trains nor validates on flagged
 galaxies. The split itself is unchanged, and every test source is still scored. Of
-the galaxies with CIGALE values, the cut flags 4.3% (6.5% at z < 0.7). Only `joint4`
-uses it.
+the galaxies with CIGALE values, the cut flags 4.4% (6.6% at z < 0.7). Mineo's
+relation adds only 8 galaxies to Lehmer's. Only `joint4` uses it.
 
 ## Evaluation
 

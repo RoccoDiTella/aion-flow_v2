@@ -37,6 +37,7 @@ import torch
 
 from aionflow_data.common import load_config
 
+from .cleaning import DESCRIPTION as SF_RULE
 from .config import TRAINING, load_run, with_lr_scale
 from .data import Split, Standardizer, TokenDataset, loader
 from .objective import Model, batch_loss, sample_subsets, scorable, scorable_rows
@@ -199,6 +200,7 @@ def run(cfg: dict, recipe: str | Path, out: str | Path, *, device: str = "cpu",
         # before the standardizer, so it too is fitted on the rows the run trains on
         withheld = {name: split.withhold(split.sf_dominated) for name, split in splits.items()}
         choices["sf_dominated_withheld"] = withheld
+        choices["sf_dominated_rule"] = SF_RULE
         log(f"[train] withheld {withheld} rows whose X-rays star formation could explain")
     standardizer = Standardizer.fit(splits["train"])
     standardizer.write(out / "standardizer.json")
