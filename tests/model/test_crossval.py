@@ -89,3 +89,19 @@ def test_one_fold_trains_and_writes_rho_for_its_held_out_sources(staged, tmp_pat
     assert choices["crossval_fold"] == 0 and choices["blocks_match_existing_split"]
     assert choices["training"]["lr_flow"] == pytest.approx(5e-4)      # joint4's half rate
     assert "Mineo" in choices["sf_dominated_rule"]
+
+
+def test_a_trained_fold_can_redo_only_its_rho(staged, tmp_path):
+    """The draws are the memory-hungry step; a fold that trained should not retrain
+    because they ran out of room."""
+    cfg, _, _ = staged
+    crossval.run(cfg, 3, tmp_path, chunk=8, rho_chunk=8, draws=16, max_epochs=1,
+                 backbone=a_backbone(), **QUIET)
+    (tmp_path / crossval.RHO).unlink()
+    before = (tmp_path / "best.pt").stat().st_mtime_ns
+    crossval.run(cfg, 3, tmp_path, rho_chunk=8, draws=16, rho_only=True,
+                 backbone=a_backbone(), **QUIET)
+    assert (tmp_path / crossval.RHO).is_file()
+    assert (tmp_path / "best.pt").stat().st_mtime_ns == before, "it must not retrain"
+    with pytest.raises(CrossvalError, match="needs a trained fold"):
+        crossval.run(cfg, 3, tmp_path / "empty", rho_only=True, backbone=a_backbone(), **QUIET)

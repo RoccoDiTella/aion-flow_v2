@@ -31,7 +31,7 @@ from .analysis import DRAWS, load_model, within_object
 from .config import TRAINING, load_run, recipe_path
 from .data import Split, Standardizer, TokenDataset
 from .objective import SUBSETS, Model
-from .train import fit, validation_masks
+from .train import CHECKPOINT, fit, validation_masks
 
 FOLDS = 5
 BLOCKS = 10
@@ -117,9 +117,19 @@ def fold_splits(parts: dict[str, Split], fold: int, seed: int) -> tuple[dict, di
     return views, {"blocks_match_existing_split": aligned}
 
 
+RHO_CHUNK = 32
+
+
 def run(cfg: dict, fold: int, out: str | Path, *, recipe: str | Path | None = None,
-        device: str = "cpu", chunk: int = 448, rho_chunk: int = 64, draws: int = DRAWS,
-        workers: int = 0, max_epochs: int | None = None, backbone=None, log=print) -> dict:
+        device: str = "cpu", chunk: int = 448, rho_chunk: int = RHO_CHUNK, draws: int = DRAWS,
+        workers: int = 0, max_epochs: int | None = None, rho_only: bool = False,
+        backbone=None, log=print) -> dict:
+    """Train one fold and write rho for its held-out sources.
+
+    With `rho_only`, the fold's saved model is reused and only rho is computed: the
+    draws are the memory-hungry step, and a fold whose training finished should not
+    have to train again because they ran out of room.
+    """
     recipe = load_run(recipe_path("joint4") if recipe is None else recipe)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -128,6 +138,14 @@ def run(cfg: dict, fold: int, out: str | Path, *, recipe: str | Path | None = No
     parts = {name: Split(staged, work, name) for name in ("train", "val", "test")}
     try:
         views, check = fold_splits(parts, fold, int(cfg["split"]["seed"]))
+        if backbone is None:
+            from .encoder import load_backbone
+            backbone = load_backbone()
+        if rho_only:
+            if not (out / CHECKPOINT).is_file():
+                raise CrossvalError(f"--rho-only needs a trained fold at {out / CHECKPOINT}")
+            return {"rho": write_rho(load_model(out, backbone, device), views["test"], fold,
+                                     out, device, rho_chunk, draws, log)}
         choices = {"crossval_fold": fold, "crossval_folds": FOLDS,
                    "rows": {k: v.n for k, v in views.items()}, **check}
         log(f"[crossval] fold {fold}: {choices['rows']}; blocks line up with the "
@@ -139,9 +157,6 @@ def run(cfg: dict, fold: int, out: str | Path, *, recipe: str | Path | None = No
             choices["sf_dominated_rule"] = DESCRIPTION
         standardizer = Standardizer.fit(views["train"])
         standardizer.write(out / "standardizer.json")
-        if backbone is None:
-            from .encoder import load_backbone
-            backbone = load_backbone()
         model = Model(backbone, recipe, standardizer).to(device)
         datasets = {k: TokenDataset(views[k], standardizer) for k in ("train", "val")}
         masks = validation_masks(views["val"], TRAINING.seed)
@@ -150,19 +165,24 @@ def run(cfg: dict, fold: int, out: str | Path, *, recipe: str | Path | None = No
         del model
         if device != "cpu" and torch.cuda.is_available():
             torch.cuda.empty_cache()
-        best = load_model(out, backbone, device)
-        test = views["test"]
-        rho, summary = within_object(best, test, device, rho_chunk, draws, SUBSETS[-1], log=log)
-        pd.DataFrame({"targetid": test.targetid, "spectype": test.spectype,
-                      "redshift": test.redshift, "rho": rho,
-                      "fold": fold}).to_csv(out / RHO, index=False)
-        (out / SUMMARY).write_text(json.dumps({"fold": fold, **summary}, indent=1,
-                                              default=float) + "\n")
-        log(f"[crossval] fold {fold}: rho for {test.n} held-out sources -> {out / RHO}")
+        summary = write_rho(load_model(out, backbone, device), views["test"], fold, out,
+                            device, rho_chunk, draws, log)
         return {"best": result["best"], "rho": summary}
     finally:
         for split in parts.values():
             split.close()
+
+
+def write_rho(model: Model, test: FoldSplit, fold: int, out: Path, device: str, chunk: int,
+              draws: int, log=print) -> dict:
+    rho, summary = within_object(model, test, device, chunk, draws, SUBSETS[-1], log=log)
+    pd.DataFrame({"targetid": test.targetid, "spectype": test.spectype,
+                  "redshift": test.redshift, "rho": rho,
+                  "fold": fold}).to_csv(out / RHO, index=False)
+    (out / SUMMARY).write_text(json.dumps({"fold": fold, **summary}, indent=1,
+                                          default=float) + "\n")
+    log(f"[crossval] fold {fold}: rho for {test.n} held-out sources -> {out / RHO}")
+    return summary
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -173,7 +193,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run", default=None, help="run recipe (default configs/joint4.yaml)")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--chunk", type=int, default=448, help="rows per training forward")
-    parser.add_argument("--rho-chunk", type=int, default=64, help="rows per forward for rho")
+    parser.add_argument("--rho-chunk", type=int, default=RHO_CHUNK,
+                        help="rows per forward for rho; the draws, not training, set the memory")
+    parser.add_argument("--rho-only", action="store_true",
+                        help="reuse this fold's trained model and only compute rho")
     parser.add_argument("--draws", type=int, default=DRAWS)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--max-epochs", type=int, default=None)
@@ -181,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         run(load_config(args.config), args.fold, args.out, recipe=args.run, device=args.device,
             chunk=args.chunk, rho_chunk=args.rho_chunk, draws=args.draws, workers=args.workers,
-            max_epochs=args.max_epochs)
+            max_epochs=args.max_epochs, rho_only=args.rho_only)
     except (CrossvalError, OSError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
